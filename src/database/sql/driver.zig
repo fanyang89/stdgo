@@ -120,6 +120,12 @@ pub const Conn = struct {
         close: *const fn (ctx: *anyopaque) void,
         begin: *const fn (ctx: *anyopaque) anyerror!Tx,
         ping: *const fn (ctx: *anyopaque) anyerror!void,
+        /// [Extension to standard Go driver.Conn]
+        /// Optional: Interrupts any in-progress query on this connection (e.g. sqlite3_interrupt,
+        /// PostgreSQL CancelRequest, MySQL KILL QUERY).
+        /// This extension allows GUI clients (such as Qianliyan) and Context cancellation to
+        /// abort slow queries out-of-band without destroying the underlying connection or pool.
+        interrupt: ?*const fn (ctx: *anyopaque) void = null,
     };
 
     pub fn prepare(self: *Conn, query: []const u8) !Stmt {
@@ -136,6 +142,17 @@ pub const Conn = struct {
 
     pub fn ping(self: *Conn) !void {
         return self.vtable.ping(self.ptr);
+    }
+
+    /// Interrupt aborts any in-progress database operation on this connection out-of-band.
+    /// Returns true if the underlying driver supports interruption and the signal was sent,
+    /// or false if unsupported by this driver.
+    pub fn interrupt(self: *Conn) bool {
+        if (self.vtable.interrupt) |f| {
+            f(self.ptr);
+            return true;
+        }
+        return false;
     }
 };
 

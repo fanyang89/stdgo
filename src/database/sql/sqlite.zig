@@ -86,6 +86,7 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
                 .close = SQLiteConn.close,
                 .begin = SQLiteConn.begin,
                 .ping = SQLiteConn.ping,
+                .interrupt = SQLiteConn.interrupt,
             },
         };
     }
@@ -165,6 +166,13 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
             if (c.sqlite3_step(stmt) != c.SQLITE_ROW) {
                 return error.SQLitePingFailed;
             }
+        }
+
+        /// Interrupts any ongoing database operation on this connection via native sqlite3_interrupt.
+        /// Thread-safe per SQLite specification (sqlite3_interrupt may be called concurrently from another thread).
+        fn interrupt(ctx: *anyopaque) void {
+            const self: *SQLiteConn = @ptrCast(@alignCast(ctx));
+            c.sqlite3_interrupt(self.db);
         }
     };
 
