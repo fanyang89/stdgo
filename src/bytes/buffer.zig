@@ -16,6 +16,7 @@ pub const Buffer = struct {
     const writer_vtable: std.Io.Writer.VTable = .{
         .drain = drainImpl,
         .flush = flushImpl,
+        .rebase = rebaseImpl,
     };
 
     pub fn init(allocator: Allocator) Buffer {
@@ -246,6 +247,16 @@ pub const Buffer = struct {
             self.length += w.end;
             w.end = 0;
         }
+        w.buffer = self.storage[self.length..];
+    }
+
+    fn rebaseImpl(w: *std.Io.Writer, preserve: usize, capacity: usize) std.Io.Writer.Error!void {
+        const self: *Buffer = @alignCast(@fieldParentPtr("writer_inst", w));
+        const to_preserve = @min(preserve, w.end);
+        const committed = w.end - to_preserve;
+        self.length += committed;
+        w.end = to_preserve;
+        self.grow(capacity + @max(preserve, to_preserve)) catch return error.WriteFailed;
         w.buffer = self.storage[self.length..];
     }
 };

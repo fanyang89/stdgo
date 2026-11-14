@@ -78,8 +78,22 @@ pub fn readFull(r: *Reader, buf: []u8) anyerror!usize {
 
 /// Copies from src to dst until EOF is reached on src.
 pub fn copy(dst: *Writer, src: *Reader) anyerror!u64 {
-    const bytes = try src.stream(dst, .unlimited);
-    return @intCast(bytes);
+    var total: u64 = 0;
+    var zero_count: usize = 0;
+    while (true) {
+        const count = src.stream(dst, .unlimited) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => |e| return e,
+        };
+        if (count == 0) {
+            zero_count += 1;
+            if (zero_count > 2) break;
+            continue;
+        }
+        zero_count = 0;
+        total += count;
+    }
+    return total;
 }
 
 /// copyBuffer is identical to copy.

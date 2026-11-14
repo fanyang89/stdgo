@@ -6,15 +6,15 @@ This document provides a comprehensive comparison between the Go standard librar
 
 ## 1. Executive Summary & Coverage Metrics
 
-`stdgo` aims to bring Go standard library ergonomics, unified streaming abstractions (`io.Reader` / `io.Writer` VTable), and high-utility packages to the Zig (0.17.0) ecosystem.
+`stdgo` aims to bring Go standard library ergonomics, native streaming abstractions (`stdgo.io.Reader` / `stdgo.io.Writer` aligned with Zig 0.17 `std.Io`), and high-utility packages to the Zig (0.17.0) ecosystem.
 
-- **Core Practical / High-Utility Coverage**: **~60%**
-  - Essential streaming I/O (`io`, `bytes`, `strings`, `bufio`), context trees (`context`), concurrency primitives (`sync.WaitGroup`, `sync.Once`, `sync.Mutex`, `sync.Pool`, `sync.errgroup`), structured logging (`log/slog`), HTTP client (`net/http`), multipart forms (`mime/multipart`), and linear-time regex (`regexp`) are production-ready with comprehensive test suites.
+- **Core Practical / High-Utility Coverage**: **~75%**
+  - Essential streaming I/O (`io`, `bytes`, `strings`), context trees (`context`), concurrency primitives (`sync.WaitGroup`, `sync.Once`, `sync.Mutex`, `sync.Pool`, `sync.errgroup`), structured logging (`log/slog`), HTTP client (`net/http`), multipart forms (`mime/multipart`), linear-time regex (`regexp`), compression (`gzip`, `zlib`, `flate`), subprocesses (`os/exec`), filesystem/env (`os`), IP/CIDR networking (`net`), and data-driven templating (`text/template`) are production-ready with comprehensive test suites.
 - **Explicit Non-Goals Excluded**: ~20% (Go runtime internals, GC, compiler tools, standalone HTTP server).
-- **Remaining Target Gap**: **~20%** (Streaming `encoding/json`, `os/exec` command pipeline, symmetric/asymmetric cryptography, advanced IP/CIDR networking, `container/list`).
+- **Remaining Target Gap**: **~5%** (Symmetric/asymmetric cryptography extensions, `html/template`).
 
 ```
-[========================== 60% Implemented ==========================>][==== 20% Target Gap ====][== 20% Non-Goals ==]
+[========================== 75% Implemented ==========================>][== 5% Gap ==][== 20% Non-Goals ==]
 ```
 
 ---
@@ -38,10 +38,10 @@ Per `AGENTS.md`, certain Go packages are intentionally excluded from `stdgo`:
 
 | Go Package | `stdgo` Package | Status | Key Features |
 | :--- | :--- | :--- | :--- |
-| **`io`** | `stdgo.io` | **100%** | VTable `Reader`, `Writer`, `Closer`, `Seeker`, `LimitReader`, `TeeReader`, `copy`, `readFull`, `readAtLeast` |
+| **`io`** | `stdgo.io` | **100%** | Native `std.Io.Reader`, `Writer`, `Closer`, `Seeker`, `LimitReader`, `TeeReader`, `copy`, `readFull`, `readAtLeast` |
 | **`bytes`** | `stdgo.bytes` | **95%** | Sliding-window `Buffer`, slice `Reader`, `Split`, `Join`, `Fields`, `Compare`, `Contains`, `HasPrefix`, `HasSuffix` |
 | **`strings`** | `stdgo.strings` | **95%** | High-performance `Builder`, string `Reader`, `Split`, `Join`, `Fields`, `Trim`, `TrimSpace`, `TrimPrefix`, `ReplaceAll`, `Repeat` |
-| **`bufio`** | `stdgo.bufio` | **95%** | `Reader` (with large payload bypass), `Writer`, `Scanner`, `ScanLines`, `ScanWords`, `ScanBytes` |
+| **`bufio`** | — | — | *Removed*: Superseded by native Zig 0.17 buffered `std.Io.Reader` & `std.Io.Writer` containers |
 | **`encoding/binary`** | `stdgo.encoding.binary` | **100%** | `BigEndian`, `LittleEndian`, `NativeEndian`, Protobuf Leb128 `Uvarint` & ZigZag `Varint` |
 | **`encoding/base64`** | `stdgo.encoding.base64` | **100%** | RFC 4648 standard, URL-safe, raw without padding; streaming & string encode/decode |
 | **`encoding/hex`** | `stdgo.encoding.hex` | **100%** | Fast Hex encode/decode, canonical 16-byte `hex.Dump` table formatter |
@@ -54,6 +54,8 @@ Per `AGENTS.md`, certain Go packages are intentionally excluded from `stdgo`:
 | **`archive/tar`** | `stdgo.archive.tar` | **90%** | POSIX USTAR archive `Reader` and `Writer`, 512-byte alignment, octal headers, trailer handling |
 | **`archive/zip`** | `stdgo.archive.zip` | **90%** | ZIP archive `Reader` and `Writer`, tail EOCD locator, Central Directory index, CRC-32 verification |
 | **`compress/gzip`** | `stdgo.compress.gzip` | **90%** | RFC 1952 Gzip `Writer` and `Reader`, header metadata, CRC-32 and `ISIZE` verification |
+| **`compress/zlib`** | `stdgo.compress.zlib` | **100%** | RFC 1950 ZLIB `Reader` and `Writer`, Adler-32 verification, compression levels 0-9 & Huffman |
+| **`compress/flate`**| `stdgo.compress.flate`| **100%** | RFC 1951 Raw Deflate `Reader` and `Writer`, streaming compression levels 0-9 & Huffman |
 | **`crypto/sha256`** | `stdgo.crypto.sha256` | **100%** | RFC 6234 SHA-256, `Sum256`, `New` (implements `hash.Hash` & `io.Writer`) |
 | **`crypto/md5`** | `stdgo.crypto.md5` | **100%** | RFC 1321 MD5, `Sum`, `New` (implements `hash.Hash` & `io.Writer`) |
 | **`crypto/hmac`** | `stdgo.crypto.hmac` | **100%** | RFC 2104 Keyed-Hash Message Authentication Code; `New(h1, h2, key)`, `sha256`, `md5` shortcuts |
@@ -69,17 +71,21 @@ Per `AGENTS.md`, certain Go packages are intentionally excluded from `stdgo`:
 | **`text/tabwriter`** | `stdgo.text.tabwriter`| **90%** | Elastic Tabstops column alignment, padding, right-align, vertical `Debug` bar separator |
 | **`container/ring`** | `stdgo.container.ring`| **100%** | Bidirectional circular buffer `Ring(T)` |
 | **`container/heap`** | `stdgo.container.heap`| **100%** | Min/Max binary heap `Heap(T, lessFn)` |
+| **`container/list`** | `stdgo.container.list`| **100%** | Doubly-linked list `List(T)` (`pushFront`, `pushBack`, `insertAfter`, `remove`, `moveToFront`) |
+| **`maps`** | `stdgo.maps` | **100%** | Go 1.21 generic map utilities: `clone`, `copy`, `equal`, `equalFunc`, `deleteFunc`, `keys`, `values` |
+| **`net` (IP/CIDR/HostPort)** | `stdgo.net` | **95%** | `IP` (IPv4/IPv6, `isLoopback`, `isPrivate`), `IPMask`, `IPNet` (`contains`), `parseIp`, `parseCidr`, `splitHostPort`, `joinHostPort` |
+| **`os/exec`** | `stdgo.os.exec` | **95%** | Subprocess management: `command`, `commandContext` (timeout/cancellation), piped `*io.Reader`/`*io.Writer`, `output`, `combinedOutput` |
+| **`os` (File/Env)** | `stdgo.os` | **95%** | Stream-oriented `File` (`*io.Reader`/`*io.Writer`), `open`, `create`, `readFile`, `writeFile`, `mkdirAll`, `remove`, `readDir`, explicit `getenv`/`lookupEnv` |
+| **`text/template`** | `stdgo.text.template` | **100%** | Data-driven templating: `Template`, `parse`, `execute`, `executeTemplate`, fields (`.Name`), pipelines (`| upper`), `if-else` ladder, `with` scope, `range`/`for` loops with payload capture (`|item, idx|`), Zig-style bindings (`const x = ...`, `var x = ...`), quoted identifiers (`.@"content-type"`), sub-template composition (`define`, `template`, `block`), custom functions (`addFunc`, `funcMap`), built-in math/logic/comparison/printf funcs, `Must` |
+| **`html/template`** | `stdgo.html.template` | **100%** | Context-aware auto-escaping against XSS: HTML body entity escaping, attribute escaping, URL scheme sanitization (`#ZgotmplZ`), JS literal escaping (`\x3c/script\x3e`), CSS/comment protection, safe wrapper types (`HTML`, `JS`, `CSS`, `URL`, `HTMLAttr`), template composition |
+| **`database/sql`** | `stdgo.database.sql` | **100%** | Generic SQL connection pool (`DB`), transactions (`Tx`), prepared statements (`Stmt`), result cursors (`Rows`), pluggable `Driver`/`Conn` VTable, thread-safe pool management (`max_open`, `max_idle`, `conn_max_lifetime`), `DBStats`, built-in `MockDriver`, and lazy optional real `SQLiteDriver` adapter (`-Dsqlite=true` via `nDimensional/zig-sqlite`) |
+| **`encoding/json`** | `stdgo.encoding.json` | **95%** | Streaming `Decoder` (`token`, `more`, `decode`), `Encoder` (`encode`, `setIndent`), `marshal`, `marshalIndent`, `unmarshal`, `valid` |
 
 ---
 
 ## 4. Gap Analysis: Missing Packages by Domain
 
 ### 4.1 Data Formats & Serialization
-- [ ] **`encoding/json`**:
-  - *Current State*: Zig has `std.json`, but lacks Go-style streaming `json.Decoder` and `json.Encoder` operating directly over `stdgo.io.Reader` and `stdgo.io.Writer`.
-  - *Missing*: `json.Decoder` (streaming parse), `json.Encoder` (streaming output), `json.RawMessage`, `json.Valid`.
-- [ ] **`compress/zlib` & `compress/flate`**:
-  - *Current State*: Gzip is implemented; raw zlib (RFC 1950) and raw flate wrappers over `stdgo.io.Reader`/`stdgo.io.Writer` are not yet standalone exported modules.
 - [ ] **`encoding/xml` & `encoding/asn1`**:
   - *Current State*: Not implemented. (Lower priority, XML usage is declining).
 
@@ -96,64 +102,50 @@ Per `AGENTS.md`, certain Go packages are intentionally excluded from `stdgo`:
   - *Current State*: Basic root bundle verification in TLS; lacks full X.509 certificate parser and CSR generator.
 
 ### 4.3 Operating System & Subprocesses
-- [ ] **`os/exec`**:
-  - *Current State*: Not implemented in `stdgo`.
-  - *Target*: `exec.Command(name, args...)`, attaching `stdin: io.Reader`, `stdout: io.Writer`, `stderr: io.Writer`, `CombinedOutput()`, `Run()`, and `Start()` with `context.Context` timeout/cancellation.
-- [ ] **`os` Helpers**:
-  - *Current State*: Basic file operations handled by Zig std.
-  - *Target*: `os.File` implementing `stdgo.io.Reader`, `stdgo.io.Writer`, `stdgo.io.Seeker`, `stdgo.io.Closer`; environment manipulation (`os.Getenv`, `os.Setenv`).
+- [x] **`os` File & Environment Helpers**:
+  - *Current State*: `os.File` implementing `stdgo.io.Reader`, `stdgo.io.Writer`, `stdgo.io.Seeker`, `stdgo.io.Closer`; environment manipulation (`os.getenv`, `os.lookupEnv`, `os.environ` via explicit `Environ.Map`), directory operations (`readDir`, `mkdirAll`, `remove`, `stat`).
 
 ### 4.4 Networking Primitives
-- [ ] **`net` (IP/CIDR Utilities)**:
-  - *Current State*: Basic IPv4/IPv6 socket dialing in `net/http`.
-  - *Target*: `net.ParseCIDR`, `net.IPNet.Contains`, `net.JoinHostPort`, `net.SplitHostPort`, `net.LookupHost`.
+- [x] **`net` (IP/CIDR Utilities)**:
+  - *Current State*: `net.IP`, `net.IPMask`, `net.IPNet`, `net.parseIp`, `net.parseCidr`, `net.splitHostPort`, `net.joinHostPort`.
 - [ ] **`net.http` (HTTP/2)**:
   - *Current State*: HTTP/1.1 complete; HTTP/2 (ALPN framing/multiplexing) is intentionally deferred.
 
-### 4.5 Data Structures & Algorithms
-- [ ] **`container/list`**:
-  - *Current State*: `container/ring` and `container/heap` are complete; doubly linked list is missing.
-  - *Target*: Generic `List(T)` (`PushBack`, `PushFront`, `InsertBefore`, `InsertAfter`, `Remove`, `MoveToFront`).
-- [ ] **`maps`**:
-  - *Current State*: `slices` is complete; Go 1.21 generic map utilities are missing.
-  - *Target*: `maps.Clone`, `maps.Copy`, `maps.Equal`, `maps.DeleteFunc`.
-
-### 4.6 Templating & Text
-- [ ] **`text/template` & `html/template`**:
-  - *Current State*: Not implemented.
-  - *Target*: Pipeline-based data-driven templating engine (`{{ .Field }}`, `{{ range }}`, `{{ if }}`).
+### 4.5 Templating & Text
+- [x] **`text/template`**:
+  - *Current State*: Full data-driven templating engine with whitespace trimming (`{{-`, `-}}`), multi-branch `{{ else if ... }}`, scope re-binding `{{ with ... }}`, Zig-style variable declarations (`const x = ...`, `var x = ...`, mutation `x = ...`), payload captures in loops (`{{ for .Items \|item, idx\| }}`), comparison/logic/format built-ins (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `not`, `printf`, `print`, `println`, `index`, `slice`, `add`, `sub`, `mul`).
+- [x] **`html/template`**:
+  - *Current State*: Context-aware auto-escaping on top of `text/template`, protecting HTML body, attributes, URLs (`#ZgotmplZ`), JS scripts (`\x3c/script\x3e`), and comments, with safe bypass types (`HTML`, `JS`, `CSS`, `URL`, `HTMLAttr`).
+- [ ] **`text/template` (Go Syntax Compatibility)**:
+  - *Future Work*: Tracked for 100% Go template compatibility: Go-style variable syntax (`$x := expr`, `$x = expr`, `range $idx, $item := expr`).
 
 ---
 
 ## 5. Prioritized Implementation Roadmap
 
-### Phase 1: High-Utility Core (P0 - Immediate Next Steps)
-These packages provide the highest return on ergonomics and eliminate remaining common pain points:
+### Phase 1: High-Utility Core (Completed ✅)
+- [x] `container/list`
+- [x] `os/exec`
+- [x] `encoding/json` (Streaming Decoder/Encoder)
+- [x] `maps` (Generic)
+- [x] `net` (IP & CIDR Primitives)
+- [x] `compress/zlib` & `compress/flate`
+- [x] `os` (File & Env)
+- [x] `text/template`
+- [x] `html/template`
+- [x] `database/sql`
 
-1. **`container/list`**:
-   - Double-linked list `List(T)` with node pooling and element iterators.
-2. **`os/exec`**:
-   - Subprocess execution wrapper with piped `io.Reader` (stdin) and `io.Writer` (stdout/stderr), complete with `context.Context` process-tree termination.
-3. **`encoding/json` (Streaming)**:
-   - Token-based streaming `Decoder` and `Encoder` plugged into `stdgo.io.Reader` and `stdgo.io.Writer` VTables.
-4. **`maps` (Generic)**:
-   - Go 1.21+ map utilities (`Equal`, `Clone`, `Copy`, `Keys`, `Values`).
-5. **`net` (IP & CIDR Primitives)**:
-   - `ParseCIDR`, `IPNet.Contains`, `SplitHostPort`, `JoinHostPort`.
-
-### Phase 2: Security & Compression Extensions (P1)
+### Phase 2: Security & Crypto Extensions (Next Focus)
 1. **`crypto/cipher` & `crypto/aes`**:
    - Standard block cipher modes (GCM, CBC, CTR) wrapping TigerStyle-verified memory boundaries.
 2. **`crypto/ed25519`**:
    - Fast, high-security Ed25519 signature generation and verification.
-3. **`compress/zlib` & `compress/flate`**:
-   - Standalone RFC 1950 zlib and raw deflate streaming wrappers.
-4. **`net/http` Client Advanced TLS**:
+3. **`net/http` Client Advanced TLS**:
    - mTLS client certificate configuration and custom verification callbacks.
 
-### Phase 3: Specialized Ecosystem Packages (P2)
-1. **`text/template`**:
-   - Data-driven text templating with piped functions.
+### Phase 3: Specialized Ecosystem Packages
+1. **`html/template`**:
+   - Context-aware HTML sanitization and auto-escaping.
 2. **`database/sql` driver abstraction**:
    - Generic database connection pool, statement caching, and transaction interfaces.
 3. **`testing` (Table-Driven Helpers)**:

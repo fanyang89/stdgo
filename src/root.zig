@@ -16,12 +16,16 @@ pub const sync = @import("sync.zig");
 pub const time = @import("time.zig");
 pub const container = @import("container.zig");
 pub const slices = @import("slices.zig");
+pub const maps = @import("maps.zig");
 pub const hash = @import("hash.zig");
 pub const crypto = @import("crypto.zig");
 pub const context = @import("context.zig");
 pub const math = @import("math.zig");
 pub const mime = @import("mime.zig");
 pub const log = @import("log.zig");
+pub const os = @import("os.zig");
+pub const html = @import("html.zig");
+pub const database = @import("database.zig");
 
 test "stdgo integration: bytes.Buffer + io.copy + bytes.Reader" {
     const testing = std.testing;
@@ -379,10 +383,14 @@ test {
     _ = time;
     _ = container;
     _ = slices;
+    _ = maps;
     _ = hash;
     _ = crypto;
     _ = context;
     _ = math;
     _ = mime;
     _ = log;
+    _ = os;
+    _ = html;
+    _ = database;
 }

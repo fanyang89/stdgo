@@ -6,7 +6,7 @@ This document outlines the project scope, architectural conventions, and develop
 
 ## 1. Project Scope & Non-Goals
 
-- **Scope**: Bring Go standard library ergonomics, stream abstractions (`io.Reader` / `io.Writer` VTable), and high-utility packages into the Zig (0.17.0) ecosystem, especially where the Zig standard library is missing or incomplete.
+- **Scope**: Bring Go standard library ergonomics, native stream abstractions (`stdgo.io.Reader` = `std.Io.Reader` / `stdgo.io.Writer` = `std.Io.Writer`), and high-utility packages into the Zig (0.17.0) ecosystem, especially where the Zig standard library is missing or incomplete.
 - **Explicit Non-Goals**:
   - **HTTP Server**: **Do not implement an HTTP server in `stdgo`**. A high-performance, ergonomic HTTP server is already fully implemented in the dedicated standalone project [lighting](https://github.com/jiacai2050/lighting/). The `stdgo.net.http` package is **strictly focused on the HTTP client** (`Client`, `Transport`, `ConnPool`, `CookieJar`, `Request`, `Response`, etc.).
 
@@ -15,7 +15,7 @@ This document outlines the project scope, architectural conventions, and develop
 ## 2. Core Architecture & Design Conventions
 
 1. **Unified Streaming Abstraction**:
-   - Stream processing must be built around the `stdgo.io.Reader` and `stdgo.io.Writer` VTable interfaces to avoid buffering entire payloads into memory or coupling to raw byte slices.
+   - Stream processing must be built around native Zig 0.17 stream abstractions (`stdgo.io.Reader` / `stdgo.io.Writer` aliased to `std.Io.Reader` / `std.Io.Writer`) to avoid buffering entire payloads into memory or coupling to raw byte slices. Direct streaming delegates to `src.stream(dst, limit)` with native zero-copy and kernel `sendFileAll` support.
 2. **Explicit Dependency Injection (No Implicit Global State or C Functions)**:
    - While porting Go APIs and striving for Go ergonomic conventions, **never introduce hidden global state, implicit memory allocations, or C runtime functions (`std.c.*`, `getenv`, etc.)**.
    - Zig does not have a hidden runtime, GC, or global implicit context. All resources—specifically `std.mem.Allocator` and `std.Io`—**must be explicitly passed from the outside** into constructors (`init`), structs, and functions that allocate memory or perform I/O.

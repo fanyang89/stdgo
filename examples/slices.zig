@@ -14,8 +14,6 @@ fn intAscending(a: i32, b: i32) bool {
 }
 
 pub fn main(init: std.process.Init) !void {
-    _ = init;
-
     std.debug.print("=== stdgo: slices (Go 1.21 generic slice algorithms) Example ===\n\n", .{});
 
     var data = [_]i32{ 73, 14, 88, 3, 42, 19, 5 };
@@ -55,6 +53,24 @@ pub fn main(init: std.process.Init) !void {
         slices.contains(i32, dupes[0..new_len], 40),
         slices.index(i32, dupes[0..new_len], 40),
     });
+
+    // -------------------------------------------------------------
+    // 6. maps (Go 1.21 generic map utilities)
+    // -------------------------------------------------------------
+    std.debug.print("\n6. maps (Go 1.21 generic map utilities):\n", .{});
+    const gpa = init.arena.allocator();
+    var m1 = std.StringHashMap(i32).init(gpa);
+    defer m1.deinit();
+    try m1.put("apple", 5);
+    try m1.put("banana", 8);
+
+    var m2 = try stdgo.maps.clone(gpa, m1);
+    defer m2.deinit();
+
+    std.debug.print("   maps.equal(m1, m2): {any}\n", .{stdgo.maps.equal(m1, m2)});
+    const map_keys = try stdgo.maps.keys(gpa, m1);
+    defer gpa.free(map_keys);
+    std.debug.print("   maps.keys: {s}, {s}\n", .{ map_keys[0], map_keys[1] });
 
     std.debug.print("\n=== slices demo completed successfully! ===\n", .{});
 }

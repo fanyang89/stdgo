@@ -4,6 +4,11 @@
     .minimum_zig_version = "0.17.0",
     .fingerprint = 0x2462b89c8d349bf8,
     .dependencies = .{
+        .sqlite = .{
+            .url = "git+https://github.com/nDimensional/zig-sqlite.git",
+            .hash = "sqlite-0.5.0-3530400-djiKTsSWAACNHCdrLkfWz3lizwThl8rpAWJIKP90TIeI",
+            .lazy = true,
+        },
     },
     .paths = .{
         "build.zig",

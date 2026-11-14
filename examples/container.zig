@@ -78,5 +78,26 @@ pub fn main(init: std.process.Init) !void {
     const moved = r.move(3);
     std.debug.print("   Moving 3 steps forward from start: value = {d}\n", .{moved.value});
 
+    // -------------------------------------------------------------
+    // 3. container.list: Doubly-linked List
+    // -------------------------------------------------------------
+    std.debug.print("\n3. container.list (Doubly-linked List):\n", .{});
+
+    var l = container.list.List([]const u8).init(gpa);
+    defer l.deinit();
+
+    _ = try l.pushBack("beta");
+    _ = try l.pushBack("gamma");
+    const first = try l.pushFront("alpha");
+    _ = first;
+
+    std.debug.print("   List len: {d}, front: {s}, back: {s}\n", .{ l.len(), l.front().?.value, l.back().?.value });
+    std.debug.print("   Elements: [ ", .{});
+    var node = l.front();
+    while (node) |n| : (node = n.nextElement()) {
+        std.debug.print("\"{s}\" ", .{n.value});
+    }
+    std.debug.print("]\n", .{});
+
     std.debug.print("\n=== container demo completed successfully! ===\n", .{});
 }

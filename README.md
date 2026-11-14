@@ -117,20 +117,28 @@ Every single module in `stdgo` is accompanied by a dedicated, runnable example i
 | `zig build run-multipart` | [`examples/multipart.zig`](examples/multipart.zig) | RFC 2046 multipart form-data writer and streaming reader |
 | `zig build run-hmac` | [`examples/hmac.zig`](examples/hmac.zig) | HMAC-SHA256, HMAC-MD5 signing and constant-time verification |
 | `zig build run-archive` | [`examples/archive.zig`](examples/archive.zig) | In-memory TAR and ZIP archive creation and inspection |
-| `zig build run-bufio-io` | [`examples/bufio_io.zig`](examples/bufio_io.zig) | Token scanner (lines, words), `io.copy`, `LimitReader`, `TeeReader` |
+| `zig build run-io` | [`examples/io.zig`](examples/io.zig) | Native buffered streaming (`takeDelimiterExclusive`), `io.copy`, `LimitReader`, `TeeReader` |
 | `zig build run-bytes-strings` | [`examples/bytes_strings.zig`](examples/bytes_strings.zig) | `bytes.Buffer`, `strings.Builder`, trimming, splitting, and join |
-| `zig build run-compress` | [`examples/compress.zig`](examples/compress.zig) | Gzip archive header serialization, streaming compression & CRC-32 |
-| `zig build run-container` | [`examples/container.zig`](examples/container.zig) | Min-heap priority queue (`Heap`) and circular ring buffer (`Ring`) |
+| `zig build run-compress` | [`examples/compress.zig`](examples/compress.zig) | `compress.gzip` (RFC 1952), `compress.zlib` (RFC 1950 Adler-32), and `compress.flate` (RFC 1951 Deflate) |
+| `zig build run-container` | [`examples/container.zig`](examples/container.zig) | Doubly-linked list (`List`), Min-heap (`Heap`), circular ring buffer (`Ring`) |
 | `zig build run-context` | [`examples/context.zig`](examples/context.zig) | Context trees, `withValue` metadata, `withCancel`, `withDeadline` |
 | `zig build run-crypto` | [`examples/crypto.zig`](examples/crypto.zig) | One-shot and streaming SHA-256 and MD5 cryptographic digests |
 | `zig build run-encoding` | [`examples/encoding.zig`](examples/encoding.zig) | RFC 4180 CSV reader/writer, Protobuf Varint, Base64, and Hex dump |
+| `zig build run-exec` | [`examples/exec.zig`](examples/exec.zig) | External command execution, piped standard I/O streams, and context cancellation |
 | `zig build run-flag` | [`examples/flag.zig`](examples/flag.zig) | Command-line flag parsing (`FlagSet`), argument bindings, and defaults |
 | `zig build run-hash-math` | [`examples/hash_math.zig`](examples/hash_math.zig) | SplitMix64 PRNG (`math.rand`) and VTable `hash.Hash` streaming |
+| `zig build run-json` | [`examples/json.zig`](examples/json.zig) | RFC 8259 JSON streaming `Decoder`/`Encoder`, Token iterator, `marshal`/`unmarshal` |
+| `zig build run-net` | [`examples/net.zig`](examples/net.zig) | IP address parsing (IPv4/IPv6), CIDR subnet calculations, `splitHostPort`/`joinHostPort` |
+| `zig build run-os` | [`examples/os.zig`](examples/os.zig) | File I/O streaming, directory operations, process environment variables |
 | `zig build run-path` | [`examples/path.zig`](examples/path.zig) | Glob pattern matching (`*`, `?`, `[a-z]`) and OS path separators |
 | `zig build run-regexp` | [`examples/regexp.zig`](examples/regexp.zig) | Linear-time regex search, URL extraction, and pattern replacement |
-| `zig build run-slices` | [`examples/slices.zig`](examples/slices.zig) | Generic slice algorithms: `sort`, `binarySearch`, `reverse`, `compact` |
+| `zig build run-slices` | [`examples/slices.zig`](examples/slices.zig) | Generic slice (`sort`, `compact`) and Go 1.21 generic `maps` utilities |
 | `zig build run-sync` | [`examples/sync.zig`](examples/sync.zig) | Concurrency primitives: `WaitGroup`, `Once`, `Mutex`, and `Pool(T)` |
 | `zig build run-tabwriter` | [`examples/tabwriter.zig`](examples/tabwriter.zig) | Elastic Tabstops column alignment for terminal tables |
+| `zig build run-template` | [`examples/template.zig`](examples/template.zig) | Data-driven template engine (`Template`), pipelines, conditions, range loops |
+| `zig build run-html-template` | [`examples/html_template.zig`](examples/html_template.zig) | Context-aware auto-escaping against XSS, HTML/JS/CSS/URL sanitization |
+| `zig build run-database-sql` | [`examples/database_sql.zig`](examples/database_sql.zig) | Generic SQL connection pool (`DB`), transactions (`Tx`), statements, and mock driver |
+| `zig build run-sqlite -Dsqlite=true` | [`examples/sqlite.zig`](examples/sqlite.zig) | Optional real SQLite driver (`zig-sqlite`), in-memory/file DB, CRUD, transactions |
 | `zig build run-time` | [`examples/time.zig`](examples/time.zig) | Duration parsing (`parseDuration`), timestamp arithmetic, cooperative sleep |
 | `zig build run-url` | [`examples/url.zig`](examples/url.zig) | RFC 3986 URL parsing, query parameter mutation (`Values`), escaping |
 
