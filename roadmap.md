@@ -49,7 +49,8 @@ Per `AGENTS.md`, certain Go packages are intentionally excluded from `stdgo`:
 | **`context`** | `stdgo.context` | **90%** | `Background()`, `TODO()`, `WithCancel()`, `WithDeadline()`, `WithValue()`, `Canceled`, `DeadlineExceeded` |
 | **`net/url`** | `stdgo.net.url` | **90%** | RFC 3986 URL parser, `QueryEscape` / `QueryUnescape`, `Values` multi-value query map |
 | **`net/http` (Client)** | `stdgo.net.http` | **85%** | Ergonomic `Client`, `Get`, `Post`, `PostForm`, `Head`, `Put`, `Delete`, `Patch`; HTTP forward proxy, HTTPS CONNECT tunneling, environment proxy detection (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) & Basic Auth, `ConnPool` (Keep-Alive), `CookieJar`, `CheckRedirect` with cross-origin sanitization, streaming request body (`io.Reader` & Chunked Transfer-Encoding), transparent Gzip decompression, end-to-end `Client.Timeout`, `Request.WithContext` |
-| **`mime/multipart`** | `stdgo.mime.multipart` | **90%** | RFC 2046 `Writer` (form fields & file uploads), streaming token scanning `Reader`, `Part` extraction |
+| **`mime`** | `stdgo.mime` | **95%** | RFC 1521/2183 `parseMediaType` (type, subtype, params), `formatMediaType`, `typeByExtension` (.json -> application/json), `extensionsByType`, and RFC 2046 `multipart.Writer`/`Reader` |
+| **`net/mail`** | `stdgo.net.mail` | **100%** | RFC 5322 email address parsing (`Address`), `parseAddress`, `parseAddressList`, and `readMessage` (MIME header & streaming body) |
 | **`path/filepath`** | `stdgo.path` | **85%** | Glob pattern `Match` (`*`, `?`, `[a-z]`, `\\` escapes), cross-platform path separators |
 | **`archive/tar`** | `stdgo.archive.tar` | **90%** | POSIX USTAR archive `Reader` and `Writer`, 512-byte alignment, octal headers, trailer handling |
 | **`archive/zip`** | `stdgo.archive.zip` | **90%** | ZIP archive `Reader` and `Writer`, tail EOCD locator, Central Directory index, CRC-32 verification |
@@ -61,7 +62,8 @@ Per `AGENTS.md`, certain Go packages are intentionally excluded from `stdgo`:
 | **`crypto/hmac`** | `stdgo.crypto.hmac` | **100%** | RFC 2104 Keyed-Hash Message Authentication Code; `New(h1, h2, key)`, `sha256`, `md5` shortcuts |
 | **`hash`** | `stdgo.hash` | **100%** | `Hash`, `Hash32`, `Hash64` VTable interfaces conforming to Go's streaming hash model |
 | **`math/rand`** | `stdgo.math.rand` | **85%** | Pseudo-random number generator (SplitMix64): `Uint64`, `Intn`, `Float64`, `Shuffle` |
-| **`time`** | `stdgo.time` | **80%** | Composite unit string parser `ParseDuration` (`"2h45m"`), `Duration`, `Time`, `Sleep` |
+| **`time`** | `stdgo.time` | **95%** | Composite unit string parser `ParseDuration` (`"2h45m"`), `Duration`, `Time`, `sleep`, civil calendar breakdown (`year`, `month`, `day`, `weekday`, `hour`, `minute`, `second`, `nanosecond`, `yearDay`), layout-based `format` & `parse` (`RFC3339`, `RFC1123`, `DateTime`, `Kitchen`), `date` construction, `Location` (UTC, `fixedZone`) |
+| **`time/rate`** | `stdgo.time.rate` | **100%** | Token bucket rate limiter (`Limiter`), burst capacity, `allow`, `allowN`, `reserve`, `reserveN`, `wait`, `waitN`, `every(d)`, `inf`, integrated with `context.Context` and `std.Io` |
 | **`slices`** | `stdgo.slices` | **95%** | Go 1.21+ generic algorithms: `Sort`, `BinarySearch`, `Reverse`, `Compact`, `Clone`, `Equal`, `Contains`, `Index` |
 | **`sync`** | `stdgo.sync` | **90%** | Atomic lock-free `WaitGroup`, atomic 3-state `Once`, `Mutex`, generic `Pool(T)` |
 | **`sync/errgroup`** | `stdgo.sync.errgroup` | **95%** | Task concurrency, first-error capture, `WithContext` broadcast cancellation, `SetLimit` limiter |
@@ -80,6 +82,10 @@ Per `AGENTS.md`, certain Go packages are intentionally excluded from `stdgo`:
 | **`html/template`** | `stdgo.html.template` | **100%** | Context-aware auto-escaping against XSS: HTML body entity escaping, attribute escaping, URL scheme sanitization (`#ZgotmplZ`), JS literal escaping (`\x3c/script\x3e`), CSS/comment protection, safe wrapper types (`HTML`, `JS`, `CSS`, `URL`, `HTMLAttr`), template composition |
 | **`database/sql`** | `stdgo.database.sql` | **100%** | Generic SQL connection pool (`DB`), transactions (`Tx`), prepared statements (`Stmt`), result cursors (`Rows`), pluggable `Driver`/`Conn` VTable, thread-safe pool management (`max_open`, `max_idle`, `conn_max_lifetime`), `DBStats`, built-in `MockDriver`, and lazy optional real `SQLiteDriver` adapter (`-Dsqlite=true` via `nDimensional/zig-sqlite`) |
 | **`encoding/json`** | `stdgo.encoding.json` | **95%** | Streaming `Decoder` (`token`, `more`, `decode`), `Encoder` (`encode`, `setIndent`), `marshal`, `marshalIndent`, `unmarshal`, `valid` |
+| **`bufio`** | `stdgo.bufio` | **100%** | Streaming tokenization (`Scanner`), customizable `SplitFunc`, `scanLines` (cross-chunk `\r\n` / `\n`), `scanWords`, `scanBytes`, `scanRunes` (UTF-8), dynamic sliding buffer up to `max_token_size` |
+| **`sync/semaphore`** | `stdgo.sync.semaphore` | **100%** | Weighted semaphore (`Weighted`), FIFO fairness, `acquire(ctx, n)`, `tryAcquire(n)`, `release(n)`, integrated with `Context` and `std.Io` cooperative sleep |
+| **`net/textproto`** | `stdgo.net.textproto` | **100%** | Line-oriented network protocol helpers: `readLine`, `readContinuedLine` (RFC 822), `readMIMEHeader`, `readDotBytes` (SMTP/NNTP dot-stuffing unescaping), `dotWriter`, `canonicalMIMEHeaderKey` |
+| **`encoding/base32`** | `stdgo.encoding.base32` | **100%** | RFC 4648 Base32 encoding/decoding, `StdEncoding`, `HexEncoding`, `withPadding`, `noPadding` (TOTP secrets) |
 
 ---
 

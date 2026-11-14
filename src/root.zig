@@ -26,6 +26,7 @@ pub const log = @import("log.zig");
 pub const os = @import("os.zig");
 pub const html = @import("html.zig");
 pub const database = @import("database.zig");
+pub const bufio = @import("bufio.zig");
 
 test "stdgo integration: bytes.Buffer + io.copy + bytes.Reader" {
     const testing = std.testing;
@@ -338,7 +339,8 @@ fn mockHttpServerThread(std_io: std.Io, server: *std.Io.net.Server) void {
 test "stdgo integration: net.http real TCP loopback round-trip" {
     const testing = std.testing;
 
-    var threaded = std.Io.Threaded.init_single_threaded;
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
     const std_io = threaded.io();
 
     const bind_addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
@@ -393,4 +395,5 @@ test {
     _ = os;
     _ = html;
     _ = database;
+    _ = bufio;
 }

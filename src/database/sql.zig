@@ -11,12 +11,6 @@ pub const sqlite = if (build_options.have_sqlite) @import("sql/sqlite.zig") else
 const Allocator = std.mem.Allocator;
 const Mutex = @import("../sync/mutex.zig").Mutex;
 
-fn currentNanoTimestamp() i128 {
-    var ts: std.posix.timespec = undefined;
-    _ = std.posix.system.clock_gettime(std.posix.CLOCK.REALTIME, &ts);
-    return @as(i128, ts.sec) * 1_000_000_000 + ts.nsec;
-}
-
 pub const Value = driver.Value;
 pub const Result = driver.Result;
 
@@ -47,6 +41,7 @@ pub const PooledConn = struct {
 /// It is safe for concurrent use by multiple threads.
 pub const DB = struct {
     allocator: Allocator,
+    io: std.Io,
     driver_instance: driver.Driver,
     dsn: []const u8,
 
@@ -65,18 +60,23 @@ pub const DB = struct {
     max_idle_closed: u64 = 0,
     max_lifetime_closed: u64 = 0,
 
-    /// Open opens a database specified by its database driver name and a driver-specific
-    /// data source name.
-    pub fn open(allocator: Allocator, drv: driver.Driver, dsn: []const u8) !*DB {
+    /// Open opens a database specified by its database driver and DSN, explicitly
+    /// taking std.Io for clock and timeout tracking.
+    pub fn open(allocator: Allocator, io: std.Io, drv: driver.Driver, dsn: []const u8) !*DB {
         const db = try allocator.create(DB);
         const dsn_copy = try allocator.dupe(u8, dsn);
         db.* = .{
             .allocator = allocator,
+            .io = io,
             .driver_instance = drv,
             .dsn = dsn_copy,
             .free_conns = std.ArrayList(*PooledConn).empty,
         };
         return db;
+    }
+
+    fn currentNanoTimestamp(self: *DB) i128 {
+        return @intCast(std.Io.Clock.real.now(self.io).nanoseconds);
     }
 
     /// Close closes the database and prevents new queries from starting.
@@ -159,14 +159,14 @@ pub const DB = struct {
     /// conn returns a single connection by either opening a new connection
     /// or returning an existing connection from the free pool.
     pub fn conn(self: *DB) !*PooledConn {
-        const start_wait = currentNanoTimestamp();
+        const start_wait = self.currentNanoTimestamp();
         self.mutex.lock();
         defer self.mutex.unlock();
 
         while (true) {
             if (self.closed) return error.DBClosed;
 
-            const now = currentNanoTimestamp();
+            const now = self.currentNanoTimestamp();
 
             // 1. Try to find a valid idle connection
             while (self.free_conns.items.len > 0) {
@@ -199,8 +199,8 @@ pub const DB = struct {
                 const pc = try self.allocator.create(PooledConn);
                 pc.* = .{
                     .raw = raw_conn,
-                    .created_at_ns = currentNanoTimestamp(),
-                    .last_used_at_ns = currentNanoTimestamp(),
+                    .created_at_ns = self.currentNanoTimestamp(),
+                    .last_used_at_ns = self.currentNanoTimestamp(),
                     .db = self,
                 };
                 return pc;
@@ -211,7 +211,7 @@ pub const DB = struct {
             self.mutex.unlock();
             std.Thread.yield() catch {};
             self.mutex.lock();
-            const waited = currentNanoTimestamp() - start_wait;
+            const waited = self.currentNanoTimestamp() - start_wait;
             if (waited > 0) {
                 self.wait_duration_ns += @intCast(waited);
             }
@@ -229,7 +229,7 @@ pub const DB = struct {
             return;
         }
 
-        const now = currentNanoTimestamp();
+        const now = self.currentNanoTimestamp();
         if (self.conn_max_lifetime_ns) |max_life| {
             if (now - pc.created_at_ns > max_life) {
                 pc.raw.close();
@@ -603,11 +603,15 @@ pub const MockDriver = struct {
 test "database.sql: basic open, ping, exec, query and close" {
     const testing = std.testing;
 
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     var state = MockDriver.State.init(testing.allocator);
     defer state.deinit();
 
     var mock = MockDriver{ .state = &state };
-    const db = try DB.open(testing.allocator, mock.driver(), "mock://localhost/testdb");
+    const db = try DB.open(testing.allocator, io, mock.driver(), "mock://localhost/testdb");
     defer db.close();
 
     // 1. Ping
@@ -648,11 +652,15 @@ test "database.sql: basic open, ping, exec, query and close" {
 test "database.sql: transaction commit and rollback" {
     const testing = std.testing;
 
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     var state = MockDriver.State.init(testing.allocator);
     defer state.deinit();
 
     var mock = MockDriver{ .state = &state };
-    const db = try DB.open(testing.allocator, mock.driver(), "mock://localhost/testdb");
+    const db = try DB.open(testing.allocator, io, mock.driver(), "mock://localhost/testdb");
     defer db.close();
 
     // 1. Commit
@@ -678,11 +686,15 @@ test "database.sql: transaction commit and rollback" {
 test "database.sql: max open and idle connections pool limit" {
     const testing = std.testing;
 
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     var state = MockDriver.State.init(testing.allocator);
     defer state.deinit();
 
     var mock = MockDriver{ .state = &state };
-    const db = try DB.open(testing.allocator, mock.driver(), "mock://localhost/testdb");
+    const db = try DB.open(testing.allocator, io, mock.driver(), "mock://localhost/testdb");
     defer db.close();
 
     db.setMaxOpenConns(2);
@@ -714,11 +726,15 @@ test "database.sql: max open and idle connections pool limit" {
 test "database.sql: concurrent connection pool contention" {
     const testing = std.testing;
 
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     var state = MockDriver.State.init(testing.allocator);
     defer state.deinit();
 
     var mock = MockDriver{ .state = &state };
-    const db = try DB.open(testing.allocator, mock.driver(), "mock://localhost/testdb");
+    const db = try DB.open(testing.allocator, io, mock.driver(), "mock://localhost/testdb");
     defer db.close();
 
     // Strict limit: only 2 simultaneous connections allowed

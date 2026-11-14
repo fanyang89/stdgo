@@ -326,7 +326,8 @@ test "context.WithValue chain" {
 test "context.WithDeadline" {
     const testing = std.testing;
 
-    var threaded = std.Io.Threaded.init_single_threaded;
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
     const io = threaded.io();
 
     const bg = background();

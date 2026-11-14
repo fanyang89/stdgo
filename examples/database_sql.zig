@@ -17,7 +17,7 @@ pub fn main(init: std.process.Init) !void {
     var mock = sql.MockDriver{ .state = &state };
 
     // 2. Open DB Connection Pool
-    const db = try sql.DB.open(allocator, mock.driver(), "mock://cluster-primary.internal:5432/production");
+    const db = try sql.DB.open(allocator, init.io, mock.driver(), "mock://cluster-primary.internal:5432/production");
     defer db.close();
 
     // Configure connection pool parameters

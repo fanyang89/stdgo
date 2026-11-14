@@ -67,6 +67,13 @@ pub const Cmd = struct {
                             s_ptr.mutex.lock();
                             defer s_ptr.mutex.unlock();
                             if (!s_ptr.exited) {
+                                // Note: We do NOT call `s_ptr.child.kill(c_io)` here because `child.kill`
+                                // synchronously calls `wait4` to reap the process. Doing so from this watchdog
+                                // thread while the main thread is concurrently blocked in `child.wait(io)` would
+                                // cause both threads to invoke `wait4` on the same PID, triggering an ECHILD race
+                                // and panicking with "programmer bug caused syscall error: CHILD (Double-free)".
+                                // Instead, send an asynchronous termination signal (SIGTERM on POSIX) without
+                                // reaping, letting the main thread's `child.wait(io)` safely reap and collect status.
                                 if (builtin.os.tag != .windows) {
                                     if (s_ptr.child.id) |pid| {
                                         _ = std.posix.kill(pid, .TERM) catch {};

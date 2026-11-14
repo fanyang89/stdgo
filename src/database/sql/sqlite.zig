@@ -359,9 +359,14 @@ test "stdgo.database.sql.sqlite: in-memory CRUD and transaction rollback/commit"
     if (!build_options.have_sqlite) return;
 
     const testing = std.testing;
+
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     var sq_driver = SQLiteDriver.init(testing.allocator);
     const sql_db = @import("../sql.zig");
-    const db = try sql_db.DB.open(testing.allocator, sq_driver.driver(), ":memory:");
+    const db = try sql_db.DB.open(testing.allocator, io, sq_driver.driver(), ":memory:");
     defer db.close();
 
     try db.ping();
@@ -462,7 +467,7 @@ test "stdgo.database.sql.sqlite: in-memory CRUD and transaction rollback/commit"
 
     // Verify sqlite:// and sqlite3:// prefix handling
     {
-        const url_db = try sql_db.DB.open(testing.allocator, sq_driver.driver(), "sqlite://:memory:");
+        const url_db = try sql_db.DB.open(testing.allocator, io, sq_driver.driver(), "sqlite://:memory:");
         defer url_db.close();
         try url_db.ping();
     }

@@ -19,7 +19,7 @@ pub fn main(init: std.process.Init) !void {
     // - "app.db" (local file database)
     // - "file:mem?mode=memory&cache=shared" (shared in-memory URI across pool connections)
     // - "sqlite://:memory:" or "sqlite3://app.db" (scheme prefixes are automatically stripped)
-    const db = try sql.DB.open(allocator, sqlite_drv.driver(), ":memory:");
+    const db = try sql.DB.open(allocator, init.io, sqlite_drv.driver(), ":memory:");
     defer db.close();
 
     db.setMaxOpenConns(5);

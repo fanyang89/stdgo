@@ -2,6 +2,8 @@ pub const url = @import("net/url.zig");
 pub const http = @import("net/http.zig");
 pub const ip = @import("net/ip.zig");
 pub const hostport = @import("net/hostport.zig");
+pub const textproto = @import("net/textproto.zig");
+pub const mail = @import("net/mail.zig");
 
 // Direct aliases matching Go net package
 pub const IP = ip.IP;
@@ -22,4 +24,6 @@ test {
     _ = http;
     _ = ip;
     _ = hostport;
+    _ = textproto;
+    _ = mail;
 }
