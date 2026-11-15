@@ -36,6 +36,13 @@ pub fn getppid() i32 {
     }
 }
 
+const win32 = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn GetComputerNameA(
+        lpBuffer: [*]u8,
+        nSize: *std.os.windows.DWORD,
+    ) std.os.windows.BOOL;
+} else struct {};
+
 /// Hostname returns the host name reported by the kernel.
 /// If an environment map is provided with HOSTNAME or COMPUTERNAME, it checks that first.
 pub fn hostname(allocator: Allocator, env: ?*const EnvironMap) ![]u8 {
@@ -45,6 +52,11 @@ pub fn hostname(allocator: Allocator, env: ?*const EnvironMap) ![]u8 {
     }
 
     if (builtin.os.tag == .windows) {
+        var buf: [256]u8 = undefined;
+        var size: std.os.windows.DWORD = buf.len;
+        if (win32.GetComputerNameA(&buf, &size) != .FALSE) {
+            return try allocator.dupe(u8, buf[0..size]);
+        }
         return error.HostnameNotFound;
     } else if (builtin.os.tag == .linux or builtin.link_libc) {
         var buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
@@ -115,7 +127,8 @@ test "os.proc: getpid, getppid, hostname, tempDir, getwd" {
     try testing.expect(live_host.len > 0);
 
     // 3. TempDir
-    try testing.expectEqualStrings("/tmp", tempDir(null));
+    const expected_default_temp = if (builtin.os.tag == .windows) "C:\\Windows\\Temp" else "/tmp";
+    try testing.expectEqualStrings(expected_default_temp, tempDir(null));
     try env_map.put("TMPDIR", "/custom/tmp");
     try testing.expectEqualStrings("/custom/tmp", tempDir(&env_map));
 
