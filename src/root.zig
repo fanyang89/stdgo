@@ -25,9 +25,15 @@ pub const mime = @import("mime.zig");
 pub const log = @import("log.zig");
 pub const os = @import("os.zig");
 pub const html = @import("html.zig");
+pub const strconv = @import("strconv.zig");
 pub const database = @import("database.zig");
 pub const bufio = @import("bufio.zig");
 pub const unicode = @import("unicode.zig");
+pub const expvar = @import("expvar.zig");
+pub const index = @import("index.zig");
+pub const testing_pkg = @import("testing.zig");
+pub const image = @import("image.zig");
+pub const debug = @import("debug.zig");
 
 test "stdgo integration: bytes.Buffer + io.copy + bytes.Reader" {
     const testing = std.testing;
@@ -120,17 +126,17 @@ test "stdgo integration: flag + tabwriter CLI formatting" {
 
     var port: i64 = 8080;
     var host: []const u8 = "127.0.0.1";
-    var debug: bool = false;
+    var debug_mode: bool = false;
 
     try fs.intVar(&port, "port", 8080, "listen port");
     try fs.stringVar(&host, "host", "127.0.0.1", "listen host");
-    try fs.boolVar(&debug, "debug", false, "enable debug logging");
+    try fs.boolVar(&debug_mode, "debug", false, "enable debug logging");
 
     const argv = [_][]const u8{ "--port=9000", "--debug" };
     try fs.parse(&argv);
 
     try testing.expectEqual(@as(i64, 9000), port);
-    try testing.expect(debug);
+    try testing.expect(debug_mode);
 
     var table_buf = bytes.Buffer.init(testing.allocator);
     defer table_buf.deinit();
@@ -398,4 +404,9 @@ test {
     _ = database;
     _ = bufio;
     _ = unicode;
+    _ = expvar;
+    _ = index;
+    _ = testing_pkg;
+    _ = image;
+    _ = debug;
 }

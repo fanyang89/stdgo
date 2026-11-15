@@ -152,6 +152,13 @@ Every single module in `stdgo` is accompanied by a dedicated, runnable example i
 | `zig build run-hash-checksums` | [`examples/hash_checksums.zig`](examples/hash_checksums.zig) | CRC-32 (IEEE, Castagnoli), Adler-32 (RFC 1950), FNV-1/FNV-1a (32/64-bit) & streaming `io.Writer` |
 | `zig build run-singleflight` | [`examples/singleflight.zig`](examples/singleflight.zig) | `sync.SingleFlight` duplicate suppression, thundering herd prevention, and result sharing |
 | `zig build run-smtp-udp-dns` | [`examples/smtp_udp_dns.zig`](examples/smtp_udp_dns.zig) | UDP datagram `PacketConn`, RFC 1035 DNS `Resolver`, and RFC 5321 SMTP `sendMail` with `plainAuth` |
+| `zig build run-non-crypto-suite` | [`examples/non_crypto_suite.zig`](examples/non_crypto_suite.zig) | `unicode` classifications/folding, `expvar` JSON metrics, `compress.lzw`, `index.suffixarray`, `testing.quick` |
+| `zig build run-data-media-suite` | [`examples/data_media_suite.zig`](examples/data_media_suite.zig) | `math/big` arbitrary integers, `encoding/xml` streaming decoder/encoder, `image` & `image/color` 2D canvas |
+| `zig build run-debug-compress-suite` | [`examples/debug_compress_suite.zig`](examples/debug_compress_suite.zig) | `compress.bzip2` BWT streaming decompressor, `debug.elf` ELF32/ELF64 headers, sections & symbol tables |
+| `zig build run-binary-formats-suite` | [`examples/binary_formats_suite.zig`](examples/binary_formats_suite.zig) | Cross-platform inspection: `debug.elf` (Linux), `debug.macho` (macOS/Fat), `debug.pe` (Windows) |
+| `zig build run-dwarf-plan9-suite` | [`examples/dwarf_plan9_suite.zig`](examples/dwarf_plan9_suite.zig) | `debug.plan9obj` a.out object and symbols parser, `debug.dwarf` DWARF 2-5 DIE tree reader |
+| `zig build run-core-foundations-suite` | [`examples/core_foundations_suite.zig`](examples/core_foundations_suite.zig) | `math.bits`, `testing.iotest`, `mime.quotedprintable`, `encoding.ascii85`, `hash.crc64`, `text.scanner`, `io.fs`, `image.draw`/`png` |
+| `zig build run-extended-suite` | [`examples/extended_suite.zig`](examples/extended_suite.zig) | `strconv` type conversions/quoting, `unicode.utf16` surrogate pairs, `html` escaping/unescaping, `image.gif` GIF89a LZW codec |
 
 To execute **all examples at once**:
 

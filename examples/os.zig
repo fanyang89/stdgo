@@ -77,5 +77,44 @@ pub fn main(init: std.process.Init) !void {
         os.lookupEnv(&env_map, "MISSING_VAR") == null,
     });
 
+    // -------------------------------------------------------------
+    // 4. User Account & Group Lookups (os.user)
+    // -------------------------------------------------------------
+    std.debug.print("\n4. User & Group Lookups (os.user):\n", .{});
+    const curr_u = try os.user.current(gpa, .{ .env = init.environ_map, .io = io });
+    defer curr_u.deinit();
+    std.debug.print("   Current User: username='{s}', uid={s}, gid={s}, home='{s}'\n", .{
+        curr_u.username,
+        curr_u.uid,
+        curr_u.gid,
+        curr_u.home_dir,
+    });
+
+    // -------------------------------------------------------------
+    // 5. Host & Process Metadata (os.getwd, os.getpid, os.hostname)
+    // -------------------------------------------------------------
+    std.debug.print("\n5. Host, Process & Advanced File Operations:\n", .{});
+    const wd = try os.getwd(gpa, io);
+    defer gpa.free(wd);
+    std.debug.print("   Current Working Directory: '{s}'\n", .{wd});
+
+    const host = try os.hostname(gpa, init.environ_map);
+    defer gpa.free(host);
+    std.debug.print("   Process PID: {d}, PPID: {d}, Hostname: '{s}', TempDir: '{s}'\n", .{
+        os.getpid(),
+        os.getppid(),
+        host,
+        os.tempDir(init.environ_map),
+    });
+
+    // Truncate & Symlink demonstration
+    const link_path = scratch_dir ++ "/server_link.conf";
+    try os.symlink(io, "server.conf", link_path);
+    const resolved_target = try os.readlink(gpa, io, link_path);
+    defer gpa.free(resolved_target);
+    std.debug.print("   Created Symlink '{s}' -> '{s}'\n", .{ link_path, resolved_target });
+
+    std.debug.print("   IsNotExist check on nonexistent: {}\n", .{os.isNotExist(error.FileNotFound)});
+
     std.debug.print("\nos demo completed successfully!\n", .{});
 }

@@ -266,21 +266,25 @@ pub const Client = struct {
         defer self.freeResponse(resp);
         if (resp.code != 354) return error.SmtpCommandFailed;
 
-        // Write message with dot-stuffing and terminal <CRLF>.<CRLF>
+        // Build dot-stuffed payload buffer
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        defer out.deinit(self.allocator);
+
         var at_start = true;
         for (msg) |c| {
             if (at_start and c == '.') {
-                _ = try self.conn.write(".");
+                try out.append(self.allocator, '.');
             }
-            const buf = [_]u8{c};
-            _ = try self.conn.write(&buf);
+            try out.append(self.allocator, c);
             at_start = (c == '\n');
         }
 
         if (!at_start) {
-            _ = try self.conn.write("\r\n");
+            try out.appendSlice(self.allocator, "\r\n");
         }
-        _ = try self.conn.write(".\r\n");
+        try out.appendSlice(self.allocator, ".\r\n");
+
+        _ = try self.conn.write(out.items);
 
         const data_resp = try self.readResponse();
         defer self.freeResponse(data_resp);

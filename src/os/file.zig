@@ -238,6 +238,70 @@ pub fn readDir(allocator: Allocator, io: Io, path: []const u8) ![]DirEntry {
     return try list.toOwnedSlice(allocator);
 }
 
+/// Stdin returns a File connected to standard input.
+pub fn stdin(io: Io) File {
+    return File.init(StdFile.stdin(), io, "/dev/stdin");
+}
+
+/// Stdout returns a File connected to standard output.
+pub fn stdout(io: Io) File {
+    return File.init(StdFile.stdout(), io, "/dev/stdout");
+}
+
+/// Stderr returns a File connected to standard error.
+pub fn stderr(io: Io) File {
+    return File.init(StdFile.stderr(), io, "/dev/stderr");
+}
+
+/// Rename renames (moves) old_path to new_path.
+/// If new_path already exists and is not a directory, Rename replaces it.
+pub fn rename(io: Io, old_path: []const u8, new_path: []const u8) !void {
+    try Dir.rename(.cwd(), old_path, .cwd(), new_path, io);
+}
+
+/// Truncate changes the size of the named file.
+pub fn truncate(io: Io, path: []const u8, size: u64) !void {
+    const handle = try Dir.openFile(.cwd(), io, path, .{ .mode = .read_write });
+    defer handle.close(io);
+    try handle.setLength(io, size);
+}
+
+/// Symlink creates link_path as a symbolic link pointing to target.
+pub fn symlink(io: Io, target: []const u8, link_path: []const u8) !void {
+    try Dir.symLink(.cwd(), io, target, link_path, .{});
+}
+
+/// Readlink returns the destination of the named symbolic link.
+pub fn readlink(allocator: Allocator, io: Io, path: []const u8) ![]u8 {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try Dir.readLink(.cwd(), io, path, &buf);
+    return try allocator.dupe(u8, buf[0..n]);
+}
+
+/// Chmod changes the mode of the named file to mode.
+pub fn chmod(io: Io, path: []const u8, mode: u32) !void {
+    const perms = StdFile.Permissions.fromMode(@intCast(mode));
+    try Dir.setFilePermissions(.cwd(), io, path, perms, .{});
+}
+
+/// IsNotExist returns a boolean indicating whether the error is known to
+/// report that a file or directory does not exist.
+pub fn isNotExist(err: anyerror) bool {
+    return err == error.FileNotFound or err == error.UnknownUser or err == error.UnknownGroup or err == error.UnknownUserId or err == error.UnknownGroupId;
+}
+
+/// IsExist returns a boolean indicating whether the error is known to report
+/// that a file or directory already exists.
+pub fn isExist(err: anyerror) bool {
+    return err == error.PathAlreadyExists;
+}
+
+/// IsPermission returns a boolean indicating whether the error is known to
+/// report that permission is denied.
+pub fn isPermission(err: anyerror) bool {
+    return err == error.AccessDenied or err == error.PermissionDenied;
+}
+
 // -------------------------------------------------------------
 // Unit Tests
 // -------------------------------------------------------------
@@ -286,4 +350,31 @@ test "os.file: create, write, seek, read, remove" {
     }
     try testing.expectEqual(@as(usize, 1), entries.len);
     try testing.expectEqualStrings("test_file.txt", entries[0].name);
+
+    // 6. Truncate
+    try truncate(io, test_path, 5);
+    const trunc_content = try readFile(testing.allocator, io, test_path);
+    defer testing.allocator.free(trunc_content);
+    try testing.expectEqual(@as(usize, 5), trunc_content.len);
+    try testing.expectEqualStrings("Hello", trunc_content);
+
+    // 7. Rename
+    const new_path = test_dir ++ "/renamed_file.txt";
+    try rename(io, test_path, new_path);
+    try testing.expectError(error.FileNotFound, open(io, test_path));
+    var f_renamed = try open(io, new_path);
+    f_renamed.close();
+
+    // 8. Symlink & Readlink
+    const sym_path = test_dir ++ "/symlink.txt";
+    try symlink(io, "renamed_file.txt", sym_path);
+    const link_target = try readlink(testing.allocator, io, sym_path);
+    defer testing.allocator.free(link_target);
+    try testing.expectEqualStrings("renamed_file.txt", link_target);
+
+    // 9. Error checkers
+    try testing.expect(isNotExist(error.FileNotFound));
+    try testing.expect(!isNotExist(error.AccessDenied));
+    try testing.expect(isPermission(error.AccessDenied));
+    try testing.expect(isExist(error.PathAlreadyExists));
 }

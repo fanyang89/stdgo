@@ -67,6 +67,13 @@ pub fn build(b: *std.Build) void {
         .{ .name = "hash-checksums", .file = "examples/hash_checksums.zig" },
         .{ .name = "singleflight", .file = "examples/singleflight.zig" },
         .{ .name = "smtp-udp-dns", .file = "examples/smtp_udp_dns.zig" },
+        .{ .name = "non-crypto-suite", .file = "examples/non_crypto_suite.zig" },
+        .{ .name = "data-media-suite", .file = "examples/data_media_suite.zig" },
+        .{ .name = "debug-compress-suite", .file = "examples/debug_compress_suite.zig" },
+        .{ .name = "binary-formats-suite", .file = "examples/binary_formats_suite.zig" },
+        .{ .name = "dwarf-plan9-suite", .file = "examples/dwarf_plan9_suite.zig" },
+        .{ .name = "core-foundations-suite", .file = "examples/core_foundations_suite.zig" },
+        .{ .name = "extended-suite", .file = "examples/extended_suite.zig" },
     };
 
     const run_all_step = b.step("run-examples", "Run all examples");

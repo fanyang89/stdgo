@@ -112,8 +112,11 @@ test "smtp client and mock server workflow with PLAIN auth" {
             _ = sc.write("354 Start mail input; end with <CRLF>.<CRLF>\r\n") catch return;
 
             // 7. Expect Mail body and trailing .\r\n
-            n = sc.read(&buf) catch return;
-            if (n == 0) return;
+            while (true) {
+                n = sc.read(&buf) catch return;
+                if (n == 0) return;
+                if (std.mem.endsWith(u8, buf[0..n], ".\r\n")) break;
+            }
             _ = sc.write("250 2.0.0 Queued mail\r\n") catch return;
 
             // 8. Expect QUIT

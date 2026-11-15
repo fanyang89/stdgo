@@ -1,5 +1,6 @@
 pub const multipart = @import("mime/multipart.zig");
 pub const mediatype = @import("mime/mediatype.zig");
+pub const quotedprintable = @import("mime/quotedprintable.zig");
 
 pub const parseMediaType = mediatype.parseMediaType;
 pub const formatMediaType = mediatype.formatMediaType;
@@ -11,4 +12,5 @@ test {
     @import("std").testing.refAllDecls(@This());
     _ = multipart;
     _ = mediatype;
+    _ = quotedprintable;
 }

@@ -1,4 +1,5 @@
 pub const io = @import("io/io.zig");
+pub const fs = @import("io/fs.zig");
 
 pub const Reader = io.Reader;
 pub const Writer = io.Writer;
