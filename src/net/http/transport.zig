@@ -9,6 +9,30 @@ const ConnPool = @import("pool.zig").ConnPool;
 const HttpConn = @import("conn.zig").HttpConn;
 const io_util = @import("io_util.zig");
 const proxy_mod = @import("proxy.zig");
+const socks5 = @import("socks5.zig");
+const time_mod = @import("../../time.zig");
+
+/// RoundTripper is an interface representing the ability to execute a
+/// single HTTP transaction, obtaining the Response for a given Request.
+pub const RoundTripper = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        roundTrip: *const fn (ctx: *anyopaque, req: *Request) anyerror!Response,
+        closeIdleConnections: ?*const fn (ctx: *anyopaque) void = null,
+    };
+
+    pub fn roundTrip(self: RoundTripper, req: *Request) anyerror!Response {
+        return self.vtable.roundTrip(self.ptr, req);
+    }
+
+    pub fn closeIdleConnections(self: RoundTripper) void {
+        if (self.vtable.closeIdleConnections) |closeFn| {
+            closeFn(self.ptr);
+        }
+    }
+};
 
 pub const TransportOptions = struct {
     proxy_url: ?[]const u8 = null,
@@ -18,6 +42,7 @@ pub const TransportOptions = struct {
     /// Custom environment lookup function. If set, takes precedence over environ_map.
     env_lookup: ?*const fn (key: []const u8) ?[]const u8 = null,
     timeout_ns: ?u64 = null,
+    timeout: ?time_mod.Duration = null,
     max_idle_conns_per_host: usize = 2,
     insecure_skip_verify: bool = false,
     disable_compression: bool = false,
@@ -32,10 +57,16 @@ pub const Transport = struct {
     ca_bundle: ?std.crypto.Certificate.Bundle = null,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, options: TransportOptions) Transport {
+        var opts = options;
+        if (opts.timeout) |d| {
+            if (opts.timeout_ns == null) {
+                opts.timeout_ns = @intCast(d.nanoseconds());
+            }
+        }
         return .{
             .allocator = allocator,
             .io = io,
-            .options = options,
+            .options = opts,
             .pool = ConnPool.init(allocator, options.max_idle_conns_per_host),
             .ca_bundle = null,
         };
@@ -47,6 +78,35 @@ pub const Transport = struct {
             bundle.deinit(self.allocator);
             self.ca_bundle = null;
         }
+    }
+
+    /// closeIdleConnections closes any connections which were previously
+    /// connected from previous requests but are now sitting idle in
+    /// a "keep-alive" state.
+    pub fn closeIdleConnections(self: *Transport) void {
+        self.pool.closeIdleConnections(self.io);
+    }
+
+    pub fn roundTripper(self: *Transport) RoundTripper {
+        return .{
+            .ptr = self,
+            .vtable = &transport_vtable,
+        };
+    }
+
+    const transport_vtable: RoundTripper.VTable = .{
+        .roundTrip = vtableRoundTrip,
+        .closeIdleConnections = vtableCloseIdleConnections,
+    };
+
+    fn vtableRoundTrip(ctx: *anyopaque, req: *Request) anyerror!Response {
+        const self: *Transport = @ptrCast(@alignCast(ctx));
+        return self.roundTrip(req);
+    }
+
+    fn vtableCloseIdleConnections(ctx: *anyopaque) void {
+        const self: *Transport = @ptrCast(@alignCast(ctx));
+        self.closeIdleConnections();
     }
 
     fn connectStream(io: std.Io, host: []const u8, port: u16, timeout: std.Io.Timeout) !std.Io.net.Stream {
@@ -170,8 +230,13 @@ pub const Transport = struct {
 
         var proxy_auth_header: ?[]const u8 = null;
         var proxy_clean_url_to_free: ?[]const u8 = null;
+        var is_socks_proxy = false;
+        var socks_user_to_free: ?[]const u8 = null;
+        var socks_pass_to_free: ?[]const u8 = null;
         defer if (proxy_clean_url_to_free) |u| self.allocator.free(u);
         defer if (proxy_auth_header) |a| self.allocator.free(a);
+        defer if (socks_user_to_free) |u| self.allocator.free(u);
+        defer if (socks_pass_to_free) |p| self.allocator.free(p);
 
         var proxy_connect_url: ?[]const u8 = null;
         if (effective_proxy_url) |raw_proxy| {
@@ -179,6 +244,9 @@ pub const Transport = struct {
             proxy_clean_url_to_free = details.clean_proxy_url;
             proxy_auth_header = details.proxy_auth;
             proxy_connect_url = details.clean_proxy_url;
+            is_socks_proxy = details.is_socks5;
+            socks_user_to_free = details.socks_user;
+            socks_pass_to_free = details.socks_pass;
         }
 
         const pooled = if (!use_proxy) self.pool.acquire(target.host, target.port, target.is_tls) else null;
@@ -192,7 +260,30 @@ pub const Transport = struct {
                 var stream = try connectStream(self.io, proxy_target.host, proxy_target.port, timeout);
                 errdefer stream.close(self.io);
 
-                if (target.is_tls) {
+                if (is_socks_proxy) {
+                    try socks5.establishSocks5Tunnel(
+                        self.io,
+                        stream,
+                        target.host,
+                        target.port,
+                        if (socks_user_to_free != null) .{
+                            .username = socks_user_to_free,
+                            .password = socks_pass_to_free,
+                        } else null,
+                    );
+                    if (target.is_tls) {
+                        break :blk try HttpConn.initTls(
+                            self.allocator,
+                            self.io,
+                            stream,
+                            target.host,
+                            self.options.ca_bundle,
+                            self.options.insecure_skip_verify,
+                        );
+                    } else {
+                        break :blk try HttpConn.initPlain(self.allocator, self.io, stream);
+                    }
+                } else if (target.is_tls) {
                     try establishConnectTunnel(self.io, stream, target.host, target.port, proxy_auth_header);
                     break :blk try HttpConn.initTls(
                         self.allocator,
@@ -234,7 +325,7 @@ pub const Transport = struct {
 
         try req_buf.appendSlice(self.allocator, req.method.asString());
         try req_buf.append(self.allocator, ' ');
-        if (use_proxy and !target.is_tls) {
+        if (use_proxy and !target.is_tls and !is_socks_proxy) {
             // Forward proxy plain HTTP request uses absolute URI
             if (std.mem.startsWith(u8, req.url, "http://") or std.mem.startsWith(u8, req.url, "https://")) {
                 try req_buf.appendSlice(self.allocator, req.url);
@@ -262,7 +353,7 @@ pub const Transport = struct {
             try req_buf.appendSlice(self.allocator, "\r\n");
         }
 
-        if (use_proxy and !target.is_tls) {
+        if (use_proxy and !target.is_tls and !is_socks_proxy) {
             if (req.header.get("Proxy-Connection") == null) {
                 try req_buf.appendSlice(self.allocator, "Proxy-Connection: Keep-Alive\r\n");
             }

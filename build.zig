@@ -63,6 +63,10 @@ pub fn build(b: *std.Build) void {
         .{ .name = "mime", .file = "examples/mime.zig" },
         .{ .name = "mail", .file = "examples/mail.zig" },
         .{ .name = "url", .file = "examples/url.zig" },
+        .{ .name = "utf8", .file = "examples/utf8.zig" },
+        .{ .name = "hash-checksums", .file = "examples/hash_checksums.zig" },
+        .{ .name = "singleflight", .file = "examples/singleflight.zig" },
+        .{ .name = "smtp-udp-dns", .file = "examples/smtp_udp_dns.zig" },
     };
 
     const run_all_step = b.step("run-examples", "Run all examples");

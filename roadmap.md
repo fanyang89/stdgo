@@ -48,7 +48,7 @@ Per `AGENTS.md`, certain Go packages are intentionally excluded from `stdgo`:
 | **`encoding/csv`** | `stdgo.encoding.csv` | **100%** | Strict RFC 4180 CSV reader/writer; quote escapes (`""`), multiline records, custom delimiters |
 | **`context`** | `stdgo.context` | **90%** | `Background()`, `TODO()`, `WithCancel()`, `WithDeadline()`, `WithValue()`, `Canceled`, `DeadlineExceeded` |
 | **`net/url`** | `stdgo.net.url` | **90%** | RFC 3986 URL parser, `QueryEscape` / `QueryUnescape`, `Values` multi-value query map |
-| **`net/http` (Client)** | `stdgo.net.http` | **85%** | Ergonomic `Client`, `Get`, `Post`, `PostForm`, `Head`, `Put`, `Delete`, `Patch`; HTTP forward proxy, HTTPS CONNECT tunneling, environment proxy detection (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) & Basic Auth, `ConnPool` (Keep-Alive), `CookieJar`, `CheckRedirect` with cross-origin sanitization, streaming request body (`io.Reader` & Chunked Transfer-Encoding), transparent Gzip decompression, end-to-end `Client.Timeout`, `Request.WithContext` |
+| **`net/http` (Client)** | `stdgo.net.http` | **95%** | Ergonomic `Client`, `Get`, `Post`, `PostForm`, `Head`, `Put`, `Delete`, `Patch`; SOCKS5 proxy (RFC 1928 / RFC 1929, `socks5://` & `socks5h://`, no auth & username/password auth), Pluggable `RoundTripper` interface, `Client.CloseIdleConnections()` / `Transport.CloseIdleConnections()`, `Request.BasicAuth()` decoding & `Request.Cookies()`, `Response.Location()` / `Response.LocationUrl()`, `Header.Has()` & `Header.Values()`, `Cookie.String()` serialization, HTTP forward proxy, HTTPS CONNECT tunneling, environment proxy detection (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`) & Basic Auth, `ConnPool` (Keep-Alive), `CookieJar`, `CheckRedirect` with cross-origin sanitization, streaming request body (`io.Reader` & Chunked Transfer-Encoding), transparent Gzip decompression, end-to-end `time.Duration` `Client.Timeout`, `Request.WithContext` |
 | **`mime`** | `stdgo.mime` | **95%** | RFC 1521/2183 `parseMediaType` (type, subtype, params), `formatMediaType`, `typeByExtension` (.json -> application/json), `extensionsByType`, and RFC 2046 `multipart.Writer`/`Reader` |
 | **`net/mail`** | `stdgo.net.mail` | **100%** | RFC 5322 email address parsing (`Address`), `parseAddress`, `parseAddressList`, and `readMessage` (MIME header & streaming body) |
 | **`path/filepath`** | `stdgo.path` | **85%** | Glob pattern `Match` (`*`, `?`, `[a-z]`, `\\` escapes), cross-platform path separators |
@@ -75,7 +75,7 @@ Per `AGENTS.md`, certain Go packages are intentionally excluded from `stdgo`:
 | **`container/heap`** | `stdgo.container.heap`| **100%** | Min/Max binary heap `Heap(T, lessFn)` |
 | **`container/list`** | `stdgo.container.list`| **100%** | Doubly-linked list `List(T)` (`pushFront`, `pushBack`, `insertAfter`, `remove`, `moveToFront`) |
 | **`maps`** | `stdgo.maps` | **100%** | Go 1.21 generic map utilities: `clone`, `copy`, `equal`, `equalFunc`, `deleteFunc`, `keys`, `values` |
-| **`net` (IP/CIDR/HostPort)** | `stdgo.net` | **95%** | `IP` (IPv4/IPv6, `isLoopback`, `isPrivate`), `IPMask`, `IPNet` (`contains`), `parseIp`, `parseCidr`, `splitHostPort`, `joinHostPort` |
+| **`net`** | `stdgo.net` | **100%** | Generic `net.Conn` stream interface, `net.PacketConn` & `net.UDPConn` datagram sockets (`listenUDP`, `dialUDP`), RFC 1035 DNS wire protocol & `net.Resolver` (`lookupHost`, `lookupIP`, `lookupCNAME`, `lookupTXT`, `lookupMX`), `net.Listener` interface & `net.listen` TCP server, `net.Dialer` with timeout & `net.dial`/`net.dialContext`, in-memory full-duplex `net.pipe()` (Go `net.Pipe()`), `net.Addr` interface, `TCPAddr`, `UDPAddr`, `lookupPort` well-known port mapping, Go 1.18+ modern zero-allocation `net/netip` (`Addr`, `Prefix`, `AddrPort`, `parseAddr`, `parsePrefix`, `parseAddrPort`), `IP` (IPv4/IPv6, `isLoopback`, `isPrivate`, `stringBuf`, `string`), `IPMask`, `IPNet` (`contains`), `parseIp`, `parseCidr`, `splitHostPort`, `joinHostPort` |
 | **`os/exec`** | `stdgo.os.exec` | **95%** | Subprocess management: `command`, `commandContext` (timeout/cancellation), piped `*io.Reader`/`*io.Writer`, `output`, `combinedOutput` |
 | **`os` (File/Env)** | `stdgo.os` | **95%** | Stream-oriented `File` (`*io.Reader`/`*io.Writer`), `open`, `create`, `readFile`, `writeFile`, `mkdirAll`, `remove`, `readDir`, explicit `getenv`/`lookupEnv` |
 | **`text/template`** | `stdgo.text.template` | **100%** | Data-driven templating: `Template`, `parse`, `execute`, `executeTemplate`, fields (`.Name`), pipelines (`| upper`), `if-else` ladder, `with` scope, `range`/`for` loops with payload capture (`|item, idx|`), Zig-style bindings (`const x = ...`, `var x = ...`), quoted identifiers (`.@"content-type"`), sub-template composition (`define`, `template`, `block`), custom functions (`addFunc`, `funcMap`), built-in math/logic/comparison/printf funcs, `Must` |
@@ -85,7 +85,13 @@ Per `AGENTS.md`, certain Go packages are intentionally excluded from `stdgo`:
 | **`bufio`** | `stdgo.bufio` | **100%** | Streaming tokenization (`Scanner`), customizable `SplitFunc`, `scanLines` (cross-chunk `\r\n` / `\n`), `scanWords`, `scanBytes`, `scanRunes` (UTF-8), dynamic sliding buffer up to `max_token_size` |
 | **`sync/semaphore`** | `stdgo.sync.semaphore` | **100%** | Weighted semaphore (`Weighted`), FIFO fairness, `acquire(ctx, n)`, `tryAcquire(n)`, `release(n)`, integrated with `Context` and `std.Io` cooperative sleep |
 | **`net/textproto`** | `stdgo.net.textproto` | **100%** | Line-oriented network protocol helpers: `readLine`, `readContinuedLine` (RFC 822), `readMIMEHeader`, `readDotBytes` (SMTP/NNTP dot-stuffing unescaping), `dotWriter`, `canonicalMIMEHeaderKey` |
+| **`net/smtp`** | `stdgo.net.smtp` | **100%** | RFC 5321 SMTP Client, `sendMail`, `plainAuth` (RFC 4616), `cramMD5Auth` (RFC 2195), dot-stuffing streaming transmission |
 | **`encoding/base32`** | `stdgo.encoding.base32` | **100%** | RFC 4648 Base32 encoding/decoding, `StdEncoding`, `HexEncoding`, `withPadding`, `noPadding` (TOTP secrets) |
+| **`unicode/utf8`** | `stdgo.unicode.utf8` | **100%** | Full RFC 3629 UTF-8 routines: `decodeRune`, `decodeLastRune`, `encodeRune`, `runeCount`, `runeLen`, `valid`, `validRune`, `validString`, `fullRune` |
+| **`hash/crc32`** | `stdgo.hash.crc32` | **100%** | CRC-32 checksums: `IEEE` (0xedb88320), `Castagnoli` (0x82f63b78), `Koopman`, `makeTable`, `checksum`, `checksumIEEE`, `update`, `Digest` (`Hash32`, `Hash`) |
+| **`hash/adler32`** | `stdgo.hash.adler32` | **100%** | RFC 1950 Adler-32 checksums: `checksum`, `update`, `Digest` (`Hash32`, `Hash`) |
+| **`hash/fnv`** | `stdgo.hash.fnv` | **100%** | Fowler-Noll-Vo hash functions: FNV-1 and FNV-1a for 32-bit (`new32`, `new32a`, `fnv32`, `fnv32a`) and 64-bit (`new64`, `new64a`, `fnv64`, `fnv64a`) |
+| **`sync/singleflight`** | `stdgo.sync.singleflight` | **100%** | Concurrency deduplication `Group(T)`: duplicate suppression `do(key, fn, args)`, in-flight result sharing, `forget(key)` |
 
 ---
 
@@ -140,6 +146,9 @@ Per `AGENTS.md`, certain Go packages are intentionally excluded from `stdgo`:
 - [x] `text/template`
 - [x] `html/template`
 - [x] `database/sql`
+- [x] `unicode/utf8`
+- [x] `hash` checksum family (`crc32`, `adler32`, `fnv`)
+- [x] `sync/singleflight`
 
 ### Phase 2: Security & Crypto Extensions (Next Focus)
 1. **`crypto/cipher` & `crypto/aes`**:

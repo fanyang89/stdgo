@@ -89,4 +89,22 @@ pub const Header = struct {
         }
         return new_h;
     }
+
+    /// has reports whether Header contains the specified key.
+    pub fn has(self: *const Header, name: []const u8) bool {
+        return self.get(name) != null;
+    }
+
+    /// values returns all values associated with the given key.
+    pub fn values(self: *const Header, allocator: std.mem.Allocator, name: []const u8) ![][]const u8 {
+        var list = std.ArrayListUnmanaged([]const u8).empty;
+        errdefer list.deinit(allocator);
+
+        for (self.entries.items) |entry| {
+            if (isCaseInsensitiveEqual(entry.name, name)) {
+                try list.append(allocator, entry.value);
+            }
+        }
+        return list.toOwnedSlice(allocator);
+    }
 };

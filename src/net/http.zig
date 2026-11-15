@@ -28,6 +28,7 @@ pub const jar = @import("http/jar.zig");
 pub const CookieJar = jar.CookieJar;
 
 pub const proxy = @import("http/proxy.zig");
+pub const socks5 = @import("http/socks5.zig");
 pub const proxyFromEnvironment = proxy.proxyFromEnvironment;
 pub const proxyFromEnvWithMap = proxy.proxyFromEnvWithMap;
 pub const proxyFromEnvWithLookup = proxy.proxyFromEnvWithLookup;
@@ -46,6 +47,7 @@ pub const ResponseBodyReader = response.ResponseBodyReader;
 pub const transport = @import("http/transport.zig");
 pub const Transport = transport.Transport;
 pub const TransportOptions = transport.TransportOptions;
+pub const RoundTripper = transport.RoundTripper;
 
 pub const pool = @import("http/pool.zig");
 pub const ConnPool = pool.ConnPool;
@@ -178,4 +180,239 @@ test "http ConnPool acquire, release and thread-safe mutex" {
     var p = ConnPool.init(testing.allocator, 2);
     // Initially empty
     try testing.expect(p.acquire("127.0.0.1", 8080, false) == null);
+}
+
+test "http Header has and values" {
+    const testing = std.testing;
+    var h = Header.init(testing.allocator);
+    defer h.deinit();
+
+    try testing.expect(!h.has("Accept"));
+    try h.add("Accept", "text/html");
+    try h.add("accept", "application/json");
+    try testing.expect(h.has("Accept"));
+    try testing.expect(h.has("accept"));
+
+    const vals = try h.values(testing.allocator, "Accept");
+    defer testing.allocator.free(vals);
+    try testing.expectEqual(@as(usize, 2), vals.len);
+    try testing.expectEqualStrings("text/html", vals[0]);
+    try testing.expectEqualStrings("application/json", vals[1]);
+}
+
+test "http Cookie string formatting" {
+    const testing = std.testing;
+    const c = Cookie{
+        .name = "session_id",
+        .value = "xyz789",
+        .path = "/app",
+        .domain = "example.com",
+        .max_age = 7200,
+        .secure = true,
+        .http_only = true,
+        .same_site = .lax,
+    };
+
+    const s = try c.string(testing.allocator);
+    defer testing.allocator.free(s);
+    try testing.expectEqualStrings("session_id=xyz789; Path=/app; Domain=example.com; Max-Age=7200; Secure; HttpOnly; SameSite=Lax", s);
+}
+
+test "http Request basicAuth decoding, cookies and clone" {
+    const testing = std.testing;
+    var req = try newRequest(testing.allocator, .GET, "https://example.com/api", null);
+    defer req.deinit();
+
+    try req.setBasicAuth("admin", "secret123");
+    try req.addCookie(.{ .name = "theme", .value = "dark" });
+    try req.setHeader("User-Agent", "stdgo-agent/1.0");
+
+    try testing.expectEqualStrings("stdgo-agent/1.0", req.userAgent().?);
+
+    var auth = (try req.basicAuth(testing.allocator)).?;
+    defer auth.deinit(testing.allocator);
+    try testing.expectEqualStrings("admin", auth.username);
+    try testing.expectEqualStrings("secret123", auth.password);
+
+    const parsed_cookies = try req.cookies(testing.allocator);
+    defer testing.allocator.free(parsed_cookies);
+    try testing.expectEqual(@as(usize, 1), parsed_cookies.len);
+    try testing.expectEqualStrings("theme", parsed_cookies[0].name);
+    try testing.expectEqualStrings("dark", parsed_cookies[0].value);
+
+    var cloned = try req.clone(testing.allocator);
+    defer cloned.deinit();
+    try testing.expectEqualStrings("stdgo-agent/1.0", cloned.userAgent().?);
+    try testing.expectEqualStrings("https://example.com/api", cloned.url);
+}
+
+test "http custom RoundTripper injection and closeIdleConnections" {
+    const testing = std.testing;
+
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const MockRoundTripper = struct {
+        calls: usize = 0,
+        idle_closed: bool = false,
+
+        fn roundTrip(ctx: *anyopaque, _: *Request) anyerror!Response {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.calls += 1;
+            return error.MockNetworkError;
+        }
+
+        fn closeIdle(ctx: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.idle_closed = true;
+        }
+
+        fn rt(self: *@This()) RoundTripper {
+            return .{
+                .ptr = self,
+                .vtable = &.{
+                    .roundTrip = roundTrip,
+                    .closeIdleConnections = closeIdle,
+                },
+            };
+        }
+    };
+
+    var mock = MockRoundTripper{};
+    var c = Client.init(testing.allocator, io, .{
+        .round_tripper = mock.rt(),
+    });
+    defer c.deinit();
+
+    var req = try newRequest(testing.allocator, .GET, "http://mock.local/test", null);
+    defer req.deinit();
+
+    const res = c.do(&req);
+    try testing.expectError(error.MockNetworkError, res);
+    try testing.expectEqual(@as(usize, 1), mock.calls);
+
+    c.closeIdleConnections();
+    try testing.expect(mock.idle_closed);
+}
+
+test "http transparent SOCKS5 proxy end-to-end" {
+    const testing = std.testing;
+
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // 1. Target HTTP server
+    const http_addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var http_server = try http_addr.listen(io, .{ .reuse_address = true });
+    defer http_server.deinit(io);
+    const http_port = http_server.socket.address.ip4.port;
+
+    const HttpWorker = struct {
+        fn run(s: *std.Io.net.Server, s_io: std.Io) void {
+            var client_sock = s.accept(s_io) catch return;
+            defer client_sock.close(s_io);
+
+            var r_buf: [512]u8 = undefined;
+            var reader = client_sock.reader(s_io, &r_buf);
+            while (std.mem.indexOf(u8, reader.interface.buffered(), "\r\n\r\n") == null) {
+                reader.interface.fillMore() catch return;
+            }
+
+            var w_buf: [512]u8 = undefined;
+            var writer = client_sock.writer(s_io, &w_buf);
+            const resp = "HTTP/1.1 200 OK\r\nContent-Length: 17\r\nConnection: close\r\n\r\nHello from SOCKS5";
+            writer.interface.writeAll(resp) catch return;
+            writer.interface.flush() catch return;
+        }
+    };
+    const http_thread = try std.Thread.spawn(.{}, HttpWorker.run, .{ &http_server, io });
+    defer http_thread.join();
+
+    // 2. Mock SOCKS5 server
+    const socks_addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var socks_server = try socks_addr.listen(io, .{ .reuse_address = true });
+    defer socks_server.deinit(io);
+    const socks_port = socks_server.socket.address.ip4.port;
+
+    const SocksWorker = struct {
+        fn run(s: *std.Io.net.Server, s_io: std.Io, target_port: u16) void {
+            var client_sock = s.accept(s_io) catch return;
+            defer client_sock.close(s_io);
+
+            var r_buf: [512]u8 = undefined;
+            var cr = client_sock.reader(s_io, &r_buf);
+            var w_buf: [512]u8 = undefined;
+            var cw = client_sock.writer(s_io, &w_buf);
+
+            // Read Greeting
+            while (cr.interface.buffered().len < 3) {
+                cr.interface.fillMore() catch return;
+            }
+            cr.interface.toss(cr.interface.buffered().len);
+
+            // Accept No Auth: 0x05, 0x00
+            cw.interface.writeAll(&[_]u8{ 0x05, 0x00 }) catch return;
+            cw.interface.flush() catch return;
+
+            // Read Connect Request: 0x05, 0x01, 0x00, ATYP...
+            while (cr.interface.buffered().len < 7) {
+                cr.interface.fillMore() catch return;
+            }
+            cr.interface.toss(cr.interface.buffered().len);
+
+            // Connect to real target
+            const target_addr = std.Io.net.IpAddress.parseIp4("127.0.0.1", target_port) catch return;
+            var upstream = target_addr.connect(s_io, .{ .mode = .stream, .timeout = .none }) catch return;
+            defer upstream.close(s_io);
+
+            // Reply Success: 0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0
+            cw.interface.writeAll(&[_]u8{ 0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0 }) catch return;
+            cw.interface.flush() catch return;
+
+            // Bidirectional proxy: client -> upstream
+            var u_rbuf: [512]u8 = undefined;
+            var ur = upstream.reader(s_io, &u_rbuf);
+            var u_wbuf: [512]u8 = undefined;
+            var uw = upstream.writer(s_io, &u_wbuf);
+
+            // Read client HTTP request and forward to upstream
+            while (std.mem.indexOf(u8, cr.interface.buffered(), "\r\n\r\n") == null) {
+                cr.interface.fillMore() catch return;
+            }
+            uw.interface.writeAll(cr.interface.buffered()) catch return;
+            uw.interface.flush() catch return;
+            cr.interface.toss(cr.interface.buffered().len);
+
+            // Read upstream HTTP response and forward to client
+            while (std.mem.indexOf(u8, ur.interface.buffered(), "Hello from SOCKS5") == null) {
+                ur.interface.fillMore() catch return;
+            }
+            cw.interface.writeAll(ur.interface.buffered()) catch return;
+            cw.interface.flush() catch return;
+        }
+    };
+    const socks_thread = try std.Thread.spawn(.{}, SocksWorker.run, .{ &socks_server, io, http_port });
+    defer socks_thread.join();
+
+    // 3. Client configured with SOCKS5 proxy
+    var proxy_buf: [64]u8 = undefined;
+    const proxy_url = try std.fmt.bufPrint(&proxy_buf, "socks5://127.0.0.1:{d}", .{socks_port});
+
+    var c = Client.init(testing.allocator, io, .{
+        .proxy_url = proxy_url,
+    });
+    defer c.deinit();
+
+    var target_buf: [64]u8 = undefined;
+    const target_url = try std.fmt.bufPrint(&target_buf, "http://127.0.0.1:{d}/test", .{http_port});
+
+    var resp = try c.get(target_url);
+    defer resp.close();
+
+    try testing.expectEqual(@as(u16, 200), resp.status_code);
+    const body = try resp.readAllAlloc(1024);
+    defer testing.allocator.free(body);
+    try testing.expectEqualStrings("Hello from SOCKS5", body);
 }

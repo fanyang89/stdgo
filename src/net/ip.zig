@@ -97,6 +97,39 @@ pub const IP = union(enum) {
         }
     }
 
+    /// Formats the IP into the provided buffer and returns the written slice.
+    pub fn stringBuf(self: IP, buf: []u8) []const u8 {
+        switch (self) {
+            .v4 => |b| {
+                return std.fmt.bufPrint(buf, "{d}.{d}.{d}.{d}", .{ b[0], b[1], b[2], b[3] }) catch "";
+            },
+            .v6 => |b| {
+                if (isV4InV6(b)) {
+                    return std.fmt.bufPrint(buf, "::ffff:{d}.{d}.{d}.{d}", .{ b[12], b[13], b[14], b[15] }) catch "";
+                }
+                var pos: usize = 0;
+                var i: usize = 0;
+                while (i < 16) : (i += 2) {
+                    const chunk: u16 = (@as(u16, b[i]) << 8) | b[i + 1];
+                    const written = std.fmt.bufPrint(buf[pos..], "{x}", .{chunk}) catch return "";
+                    pos += written.len;
+                    if (i < 14 and pos < buf.len) {
+                        buf[pos] = ':';
+                        pos += 1;
+                    }
+                }
+                return buf[0..pos];
+            },
+        }
+    }
+
+    /// Formats the IP into a newly allocated string.
+    pub fn string(self: IP, allocator: Allocator) Allocator.Error![]u8 {
+        var buf: [64]u8 = undefined;
+        const s = self.stringBuf(&buf);
+        return allocator.dupe(u8, s);
+    }
+
     fn isV4InV6(b: [16]u8) bool {
         for (b[0..10]) |byte| {
             if (byte != 0) return false;

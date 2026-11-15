@@ -332,4 +332,17 @@ pub const Response = struct {
         }
         return list.toOwnedSlice(allocator);
     }
+
+    /// location returns the URL of the response's "Location" header, if present.
+    pub fn location(self: *const Response) ?[]const u8 {
+        return self.header.get("Location");
+    }
+
+    /// locationUrl parses the response's "Location" header as a URL.
+    pub fn locationUrl(self: *const Response) !?@import("../url.zig").URL {
+        if (self.location()) |loc| {
+            return try @import("../url.zig").parse(loc);
+        }
+        return null;
+    }
 };

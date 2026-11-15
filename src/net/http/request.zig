@@ -14,6 +14,10 @@ pub const ParsedTarget = struct {
     request_target: []const u8,
 };
 
+/// Parses target URL into scheme, host, port, path/query, and TLS flag.
+/// Supports http, https, socks5, and socks5h:
+/// - `socks5://`: Standard SOCKS5 proxy protocol (historically local DNS).
+/// - `socks5h://`: SOCKS5 proxy with remote Host DNS resolution (prevents DNS leaks).
 pub fn parseUrlTarget(raw_url: []const u8) !ParsedTarget {
     var rest = raw_url;
     var is_tls = false;
@@ -30,6 +34,16 @@ pub fn parseUrlTarget(raw_url: []const u8) !ParsedTarget {
         is_tls = true;
         port = 443;
         scheme = "https";
+    } else if (std.mem.startsWith(u8, rest, "socks5://")) {
+        rest = rest[9..];
+        is_tls = false;
+        port = 1080;
+        scheme = "socks5";
+    } else if (std.mem.startsWith(u8, rest, "socks5h://")) {
+        rest = rest[10..];
+        is_tls = false;
+        port = 1080;
+        scheme = "socks5h";
     } else if (std.mem.indexOf(u8, rest, "://") != null) {
         return error.UnsupportedScheme;
     } else {
@@ -164,6 +178,73 @@ pub const Request = struct {
         const s = try std.fmt.allocPrint(self.allocator, "{d}", .{body.len});
         self.cl_str = s;
         try self.header.set("Content-Length", s);
+    }
+
+    pub fn userAgent(self: *const Request) ?[]const u8 {
+        return self.header.get("User-Agent");
+    }
+
+    pub const BasicAuth = struct {
+        username: []u8,
+        password: []u8,
+
+        pub fn deinit(self: *BasicAuth, allocator: std.mem.Allocator) void {
+            allocator.free(self.username);
+            allocator.free(self.password);
+        }
+    };
+
+    /// basicAuth returns the username and password provided in the request's
+    /// Authorization header, if the request uses HTTP Basic Authentication.
+    pub fn basicAuth(self: *const Request, allocator: std.mem.Allocator) !?BasicAuth {
+        const auth = self.header.get("Authorization") orelse return null;
+        if (!std.mem.startsWith(u8, auth, "Basic ")) return null;
+
+        const b64 = std.mem.trim(u8, auth[6..], " \t");
+        const dec_size = try std.base64.standard.Decoder.calcSizeForSlice(b64);
+        const decoded = try allocator.alloc(u8, dec_size);
+        defer allocator.free(decoded);
+
+        try std.base64.standard.Decoder.decode(decoded, b64);
+
+        const colon_idx = std.mem.indexOfScalar(u8, decoded, ':') orelse return null;
+        const u = try allocator.dupe(u8, decoded[0..colon_idx]);
+        errdefer allocator.free(u);
+        const p = try allocator.dupe(u8, decoded[colon_idx + 1 ..]);
+        errdefer allocator.free(p);
+
+        return BasicAuth{
+            .username = u,
+            .password = p,
+        };
+    }
+
+    /// cookies parses and returns the HTTP cookies sent with the request.
+    pub fn cookies(self: *const Request, allocator: std.mem.Allocator) ![]@import("cookie.zig").Cookie {
+        var list = std.ArrayListUnmanaged(@import("cookie.zig").Cookie).empty;
+        errdefer list.deinit(allocator);
+
+        for (self.header.entries.items) |entry| {
+            if (std.ascii.eqlIgnoreCase(entry.name, "Cookie")) {
+                var it = @import("cookie.zig").CookieIterator{ .raw = entry.value };
+                while (it.next()) |c| {
+                    try list.append(allocator, c);
+                }
+            }
+        }
+        return list.toOwnedSlice(allocator);
+    }
+
+    /// clone returns a copy of the request with a fresh header copy.
+    pub fn clone(self: *const Request, allocator: std.mem.Allocator) !Request {
+        var copy = Request.init(allocator, self.method, self.url);
+        copy.header.deinit();
+        copy.header = try self.header.clone(allocator);
+        copy.body = self.body;
+        copy.body_reader = self.body_reader;
+        copy.content_length = self.content_length;
+        copy.ctx = self.ctx;
+        return copy;
     }
 
     pub fn setBodyReader(self: *Request, r: *io.Reader, cl: ?u64) !void {

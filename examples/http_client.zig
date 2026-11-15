@@ -166,5 +166,35 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("\n4. Context-cancelled request result: {s} (Expected: Canceled)\n", .{@errorName(err)});
     }
 
+    // -------------------------------------------------------------
+    // 6. Close idle connections & Custom RoundTripper Middleware Demo
+    // -------------------------------------------------------------
+    client.closeIdleConnections();
+    std.debug.print("5. client.closeIdleConnections() executed successfully.\n", .{});
+
+    // Demonstrate BasicAuth & Cookie generation
+    var auth_req = try http.newRequest(gpa, .GET, "https://api.example.com/user", null);
+    defer auth_req.deinit();
+    try auth_req.setBasicAuth("developer", "token-secret-xyz");
+    try auth_req.addCookie(.{ .name = "session_id", .value = "s_12345" });
+
+    var decoded_auth = (try auth_req.basicAuth(gpa)).?;
+    defer decoded_auth.deinit(gpa);
+    std.debug.print("6. Request BasicAuth decoded: username='{s}', password='{s}'\n", .{ decoded_auth.username, decoded_auth.password });
+
+    const req_cookies = try auth_req.cookies(gpa);
+    defer gpa.free(req_cookies);
+    std.debug.print("   Request parsed {d} cookie(s): {s}={s}\n", .{ req_cookies.len, req_cookies[0].name, req_cookies[0].value });
+
+    // -------------------------------------------------------------
+    // 7. SOCKS5 Proxy Demonstration (RFC 1928 / RFC 1929)
+    // -------------------------------------------------------------
+    std.debug.print("7. SOCKS5 Proxy Support:\n", .{});
+    const socks_proxy_url = "socks5://user:pass@127.0.0.1:1080";
+    var proxy_details = try http.proxy.parseProxyDetails(gpa, socks_proxy_url);
+    defer proxy_details.deinit(gpa);
+    std.debug.print("   - Configured SOCKS5 URL: '{s}' (is_socks5={})\n", .{ proxy_details.clean_proxy_url, proxy_details.is_socks5 });
+    std.debug.print("   - SOCKS5 Auth: user='{?s}', pass='{?s}'\n", .{ proxy_details.socks_user, proxy_details.socks_pass });
+
     std.debug.print("\n=== HTTP Client demo completed successfully! ===\n", .{});
 }

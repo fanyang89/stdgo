@@ -27,6 +27,43 @@ pub const Cookie = struct {
     http_only: bool = false,
     same_site: SameSite = .default,
     raw: ?[]const u8 = null,
+
+    /// string returns the serialization of the cookie for Set-Cookie header.
+    pub fn string(self: *const Cookie, allocator: std.mem.Allocator) ![]u8 {
+        var buf = std.ArrayListUnmanaged(u8).empty;
+        errdefer buf.deinit(allocator);
+
+        try buf.appendSlice(allocator, self.name);
+        try buf.append(allocator, '=');
+        try buf.appendSlice(allocator, self.value);
+
+        if (self.path) |p| {
+            try buf.appendSlice(allocator, "; Path=");
+            try buf.appendSlice(allocator, p);
+        }
+        if (self.domain) |d| {
+            try buf.appendSlice(allocator, "; Domain=");
+            try buf.appendSlice(allocator, d);
+        }
+        if (self.max_age) |ma| {
+            var ma_buf: [32]u8 = undefined;
+            const ma_str = try std.fmt.bufPrint(&ma_buf, "; Max-Age={d}", .{ma});
+            try buf.appendSlice(allocator, ma_str);
+        }
+        if (self.secure) {
+            try buf.appendSlice(allocator, "; Secure");
+        }
+        if (self.http_only) {
+            try buf.appendSlice(allocator, "; HttpOnly");
+        }
+        const ss = self.same_site.asString();
+        if (ss.len > 0) {
+            try buf.appendSlice(allocator, "; SameSite=");
+            try buf.appendSlice(allocator, ss);
+        }
+
+        return buf.toOwnedSlice(allocator);
+    }
 };
 
 pub const CookieIterator = struct {

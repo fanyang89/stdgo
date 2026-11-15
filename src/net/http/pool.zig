@@ -101,4 +101,17 @@ pub const ConnPool = struct {
             self.allocator.destroy(conn);
         };
     }
+
+    /// closeIdleConnections closes and drains all idle connections currently in the pool.
+    pub fn closeIdleConnections(self: *ConnPool, io: std.Io) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        for (self.entries.items) |entry| {
+            entry.conn.close(io);
+            self.allocator.destroy(entry.conn);
+            self.allocator.free(entry.host);
+        }
+        self.entries.clearRetainingCapacity();
+    }
 };

@@ -4,6 +4,7 @@ pub const mutex = @import("sync/mutex.zig");
 pub const pool = @import("sync/pool.zig");
 pub const errgroup = @import("sync/errgroup.zig");
 pub const semaphore = @import("sync/semaphore.zig");
+pub const singleflight = @import("sync/singleflight.zig");
 
 pub const WaitGroup = waitgroup.WaitGroup;
 pub const Once = once.Once;
@@ -11,6 +12,7 @@ pub const Mutex = mutex.Mutex;
 pub const Pool = pool.Pool;
 pub const ErrGroup = errgroup.Group;
 pub const Semaphore = semaphore.Weighted;
+pub const SingleFlight = singleflight.Group;
 
 test {
     @import("std").testing.refAllDecls(@This());
@@ -20,4 +22,5 @@ test {
     _ = pool;
     _ = errgroup;
     _ = semaphore;
+    _ = singleflight;
 }

@@ -111,7 +111,7 @@ Every single module in `stdgo` is accompanied by a dedicated, runnable example i
 | Example Step | Source File | Description |
 | :--- | :--- | :--- |
 | `zig build run` | [`examples/overview.zig`](examples/overview.zig) | Comprehensive cross-module tour |
-| `zig build run-http` | [`examples/http_client.zig`](examples/http_client.zig) | HTTP Client with timeout, chunked upload, gzip & context cancellation |
+| `zig build run-http` | [`examples/http_client.zig`](examples/http_client.zig) | HTTP Client with SOCKS5/HTTP proxy, timeout, chunked upload, gzip & context cancellation |
 | `zig build run-slog` | [`examples/slog.zig`](examples/slog.zig) | Structured logging with `TextHandler`, `JSONHandler`, and attributes |
 | `zig build run-errgroup` | [`examples/errgroup.zig`](examples/errgroup.zig) | Concurrent task group with error propagation, cancellation, & rate limiting |
 | `zig build run-multipart` | [`examples/multipart.zig`](examples/multipart.zig) | RFC 2046 multipart form-data writer and streaming reader |
@@ -129,7 +129,7 @@ Every single module in `stdgo` is accompanied by a dedicated, runnable example i
 | `zig build run-exec` | [`examples/exec.zig`](examples/exec.zig) | External command execution, piped standard I/O streams, and context cancellation |
 | `zig build run-flag` | [`examples/flag.zig`](examples/flag.zig) | Command-line flag parsing (`FlagSet`), argument bindings, and defaults |
 | `zig build run-json` | [`examples/json.zig`](examples/json.zig) | RFC 8259 JSON streaming `Decoder`/`Encoder`, Token iterator, `marshal`/`unmarshal` |
-| `zig build run-net` | [`examples/net.zig`](examples/net.zig) | IP address parsing (IPv4/IPv6), CIDR subnet calculations, `splitHostPort`/`joinHostPort` |
+| `zig build run-net` | [`examples/net.zig`](examples/net.zig) | IP address parsing (IPv4/IPv6), CIDR calculations, `net.listen`, `net.Dialer`, in-memory `net.pipe()`, `lookupPort` |
 | `zig build run-textproto` | [`examples/textproto.zig`](examples/textproto.zig) | Line-oriented network protocol reader/writer, MIME headers, dot-stuffing |
 | `zig build run-os` | [`examples/os.zig`](examples/os.zig) | File I/O streaming, directory operations, process environment variables |
 | `zig build run-path` | [`examples/path.zig`](examples/path.zig) | Glob pattern matching (`*`, `?`, `[a-z]`) and OS path separators |
@@ -148,6 +148,10 @@ Every single module in `stdgo` is accompanied by a dedicated, runnable example i
 | `zig build run-mime` | [`examples/mime.zig`](examples/mime.zig) | MIME type parsing (`parseMediaType`), formatting (`formatMediaType`), extension lookup |
 | `zig build run-mail` | [`examples/mail.zig`](examples/mail.zig) | RFC 5322 email address parsing (`Address`), `parseAddressList`, `readMessage` |
 | `zig build run-url` | [`examples/url.zig`](examples/url.zig) | RFC 3986 URL parsing, query parameter mutation (`Values`), escaping |
+| `zig build run-utf8` | [`examples/utf8.zig`](examples/utf8.zig) | RFC 3629 UTF-8 decoding (`decodeRune`, `decodeLastRune`), encoding, rune counting & validation |
+| `zig build run-hash-checksums` | [`examples/hash_checksums.zig`](examples/hash_checksums.zig) | CRC-32 (IEEE, Castagnoli), Adler-32 (RFC 1950), FNV-1/FNV-1a (32/64-bit) & streaming `io.Writer` |
+| `zig build run-singleflight` | [`examples/singleflight.zig`](examples/singleflight.zig) | `sync.SingleFlight` duplicate suppression, thundering herd prevention, and result sharing |
+| `zig build run-smtp-udp-dns` | [`examples/smtp_udp_dns.zig`](examples/smtp_udp_dns.zig) | UDP datagram `PacketConn`, RFC 1035 DNS `Resolver`, and RFC 5321 SMTP `sendMail` with `plainAuth` |
 
 To execute **all examples at once**:
 

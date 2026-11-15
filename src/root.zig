@@ -27,6 +27,7 @@ pub const os = @import("os.zig");
 pub const html = @import("html.zig");
 pub const database = @import("database.zig");
 pub const bufio = @import("bufio.zig");
+pub const unicode = @import("unicode.zig");
 
 test "stdgo integration: bytes.Buffer + io.copy + bytes.Reader" {
     const testing = std.testing;
@@ -396,4 +397,5 @@ test {
     _ = html;
     _ = database;
     _ = bufio;
+    _ = unicode;
 }

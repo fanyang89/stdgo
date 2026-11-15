@@ -7,9 +7,11 @@ const parseUrlTarget = @import("request.zig").parseUrlTarget;
 const Response = @import("response.zig").Response;
 const Transport = @import("transport.zig").Transport;
 const TransportOptions = @import("transport.zig").TransportOptions;
+const RoundTripper = @import("transport.zig").RoundTripper;
 const CookieJar = @import("jar.zig").CookieJar;
 const Status = @import("status.zig").Status;
 const Method = @import("method.zig").Method;
+const time_mod = @import("../../time.zig");
 
 pub const ClientOptions = struct {
     proxy_url: ?[]const u8 = null,
@@ -17,9 +19,11 @@ pub const ClientOptions = struct {
     environ_map: ?*const std.process.Environ.Map = null,
     env_lookup: ?*const fn (key: []const u8) ?[]const u8 = null,
     transport: ?TransportOptions = null,
+    round_tripper: ?RoundTripper = null,
     max_redirects: u8 = 10,
     jar: ?*CookieJar = null,
     timeout_ns: ?u64 = null,
+    timeout: ?time_mod.Duration = null,
     check_redirect: ?*const fn (ctx_ptr: ?*anyopaque, req: *Request, via: []const *const Request) anyerror!void = null,
     check_redirect_ctx: ?*anyopaque = null,
 };
@@ -28,10 +32,17 @@ pub const Client = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     transport: Transport,
+    custom_round_tripper: ?RoundTripper = null,
     options: ClientOptions,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, options: ClientOptions) Client {
         var trans_opts = options.transport orelse TransportOptions{};
+        var effective_timeout_ns = options.timeout_ns;
+        if (options.timeout) |d| {
+            if (effective_timeout_ns == null) {
+                effective_timeout_ns = @intCast(d.nanoseconds());
+            }
+        }
         if (options.proxy_url) |p| {
             trans_opts.proxy_url = p;
         }
@@ -42,19 +53,35 @@ pub const Client = struct {
         if (trans_opts.env_lookup == null and options.env_lookup != null) {
             trans_opts.env_lookup = options.env_lookup;
         }
-        if (trans_opts.timeout_ns == null and options.timeout_ns != null) {
-            trans_opts.timeout_ns = options.timeout_ns;
+        if (trans_opts.timeout_ns == null and effective_timeout_ns != null) {
+            trans_opts.timeout_ns = effective_timeout_ns;
         }
+
+        var client_opts = options;
+        client_opts.timeout_ns = effective_timeout_ns;
+
         return .{
             .allocator = allocator,
             .io = io,
             .transport = Transport.init(allocator, io, trans_opts),
-            .options = options,
+            .custom_round_tripper = options.round_tripper,
+            .options = client_opts,
         };
     }
 
     pub fn deinit(self: *Client) void {
         self.transport.deinit();
+    }
+
+    /// closeIdleConnections closes any connections which were previously
+    /// connected from previous requests but are now sitting idle in
+    /// a "keep-alive" state.
+    pub fn closeIdleConnections(self: *Client) void {
+        if (self.custom_round_tripper) |rt| {
+            rt.closeIdleConnections();
+        } else {
+            self.transport.closeIdleConnections();
+        }
     }
 
     pub fn do(self: *Client, req: *Request) !Response {
@@ -119,7 +146,10 @@ pub const Client = struct {
                 round_trip_req.withContext(c);
             }
 
-            var resp = try self.transport.roundTrip(&round_trip_req);
+            var resp = if (self.custom_round_tripper) |rt|
+                try rt.roundTrip(&round_trip_req)
+            else
+                try self.transport.roundTrip(&round_trip_req);
 
             // Collect Set-Cookie into jar
             if (self.options.jar) |jar| {

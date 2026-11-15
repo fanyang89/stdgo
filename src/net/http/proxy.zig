@@ -121,8 +121,15 @@ pub fn proxyFromEnvWithLookup(
     if (proxy_val) |p| {
         const trimmed = std.mem.trim(u8, p, " \t\r\n");
         if (trimmed.len > 0) {
-            // Only accept http:// or https:// proxy schemes
-            if (std.mem.startsWith(u8, trimmed, "http://") or std.mem.startsWith(u8, trimmed, "https://")) {
+            // Accept http://, https://, socks5://, or socks5h:// proxy schemes.
+            // Note: `socks5://` historically indicated local DNS resolution, whereas `socks5h://`
+            // explicitly requests remote DNS resolution at the proxy host to prevent DNS leaks/poisoning.
+            // stdgo treats both transparently by passing the remote domain to the SOCKS5 handshake (RFC 1928 ATYP 0x03).
+            if (std.mem.startsWith(u8, trimmed, "http://") or
+                std.mem.startsWith(u8, trimmed, "https://") or
+                std.mem.startsWith(u8, trimmed, "socks5://") or
+                std.mem.startsWith(u8, trimmed, "socks5h://"))
+            {
                 return try allocator.dupe(u8, trimmed);
             }
         }
@@ -134,18 +141,26 @@ pub fn proxyFromEnvWithLookup(
 pub const ProxyDetails = struct {
     clean_proxy_url: []const u8,
     proxy_auth: ?[]const u8,
+    is_socks5: bool = false,
+    socks_user: ?[]const u8 = null,
+    socks_pass: ?[]const u8 = null,
 
     pub fn deinit(self: *ProxyDetails, allocator: Allocator) void {
         allocator.free(self.clean_proxy_url);
         if (self.proxy_auth) |auth| allocator.free(auth);
+        if (self.socks_user) |u| allocator.free(u);
+        if (self.socks_pass) |p| allocator.free(p);
     }
 };
 
-/// Parses a proxy URL and extracts Basic Auth credentials if present in userinfo.
+/// Parses a proxy URL and extracts Basic Auth or SOCKS5 credentials if present in userinfo.
 /// e.g. "http://admin:secret123@proxy.com:8080" ->
 /// clean_proxy_url = "http://proxy.com:8080"
 /// proxy_auth = "Basic YWRtaW46c2VjcmV0MTIz"
 pub fn parseProxyDetails(allocator: Allocator, raw_proxy_url: []const u8) !ProxyDetails {
+    const is_socks = std.mem.startsWith(u8, raw_proxy_url, "socks5://") or
+        std.mem.startsWith(u8, raw_proxy_url, "socks5h://");
+
     const scheme_sep = std.mem.indexOf(u8, raw_proxy_url, "://");
     const prefix_len = if (scheme_sep) |idx| idx + 3 else 0;
     const scheme = if (scheme_sep) |idx| raw_proxy_url[0 .. idx + 3] else "http://";
@@ -159,20 +174,41 @@ pub fn parseProxyDetails(allocator: Allocator, raw_proxy_url: []const u8) !Proxy
         const clean_url = try std.fmt.allocPrint(allocator, "{s}{s}", .{ scheme, host_port });
         errdefer allocator.free(clean_url);
 
-        const b64_userinfo = try base64.std_encoding.encodeToString(allocator, userinfo);
-        defer allocator.free(b64_userinfo);
+        var socks_user: ?[]const u8 = null;
+        var socks_pass: ?[]const u8 = null;
 
-        const auth_header = try std.fmt.allocPrint(allocator, "Basic {s}", .{b64_userinfo});
+        if (is_socks) {
+            if (std.mem.indexOfScalar(u8, userinfo, ':')) |colon| {
+                socks_user = try allocator.dupe(u8, userinfo[0..colon]);
+                socks_pass = try allocator.dupe(u8, userinfo[colon + 1 ..]);
+            } else {
+                socks_user = try allocator.dupe(u8, userinfo);
+            }
+            return .{
+                .clean_proxy_url = clean_url,
+                .proxy_auth = null,
+                .is_socks5 = true,
+                .socks_user = socks_user,
+                .socks_pass = socks_pass,
+            };
+        } else {
+            const b64_userinfo = try base64.std_encoding.encodeToString(allocator, userinfo);
+            defer allocator.free(b64_userinfo);
 
-        return .{
-            .clean_proxy_url = clean_url,
-            .proxy_auth = auth_header,
-        };
+            const auth_header = try std.fmt.allocPrint(allocator, "Basic {s}", .{b64_userinfo});
+
+            return .{
+                .clean_proxy_url = clean_url,
+                .proxy_auth = auth_header,
+                .is_socks5 = false,
+            };
+        }
     }
 
     return .{
         .clean_proxy_url = try allocator.dupe(u8, raw_proxy_url),
         .proxy_auth = null,
+        .is_socks5 = is_socks,
     };
 }
 
