@@ -6,6 +6,7 @@
 //! `remove`, `removeAll`, `stat`.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const io_mod = @import("../io.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -117,7 +118,7 @@ pub const File = struct {
         return FileInfo{
             .name = self.name,
             .size = st.size,
-            .mode = @intFromEnum(st.permissions),
+            .mode = @backingInt(st.permissions),
             .mod_time = @truncate(st.mtime.nanoseconds),
             .is_dir = st.kind == .directory,
         };
@@ -132,65 +133,79 @@ pub const File = struct {
     }
 
     /// Close closes the File, rendering it unusable for I/O.
-    pub fn close(self: *File) void {
+    pub fn close(self: *File) !void {
         if (self.closed) return;
         self.closed = true;
+        defer self.handle.close(self.io);
         if (self.writer_init) {
-            self.writer_inst.interface.flush() catch {};
+            try self.writer_inst.interface.flush();
         }
-        self.handle.close(self.io);
     }
 };
 
 /// Open opens the named file for reading.
 pub fn open(io: Io, path: []const u8) !File {
+    std.debug.assert(path.len > 0);
     const handle = try Dir.openFile(.cwd(), io, path, .{ .mode = .read_only });
     return File.init(handle, io, path);
 }
 
 /// Create creates or truncates the named file.
 pub fn create(io: Io, path: []const u8) !File {
+    std.debug.assert(path.len > 0);
     const handle = try Dir.createFile(.cwd(), io, path, .{ .read = true, .truncate = true });
     return File.init(handle, io, path);
 }
 
 /// ReadFile reads the named file and returns the contents.
 pub fn readFile(allocator: Allocator, io: Io, path: []const u8) ![]u8 {
+    std.debug.assert(path.len > 0);
     var f = try open(io, path);
-    defer f.close();
+    defer _ = f.close() catch {};
 
     const st = try f.stat();
     const buf = try allocator.alloc(u8, @intCast(st.size));
     errdefer allocator.free(buf);
 
-    _ = try io_mod.readFull(f.reader(), buf);
+    const n = try io_mod.readFull(f.reader(), buf);
+    std.debug.assert(n == buf.len);
     return buf;
 }
 
 /// WriteFile writes data to the named file, creating it if necessary.
 pub fn writeFile(io: Io, path: []const u8, data: []const u8, perm: u32) !void {
+    std.debug.assert(path.len > 0);
     _ = perm;
     var f = try create(io, path);
-    defer f.close();
+    errdefer _ = f.close() catch {};
 
-    _ = try f.write(data);
+    var remaining = data;
+    while (remaining.len > 0) {
+        const written = try f.write(remaining);
+        std.debug.assert(written > 0);
+        remaining = remaining[written..];
+    }
     try f.sync();
+    try f.close();
 }
 
 /// Mkdir creates a new directory with the specified permissions.
 pub fn mkdir(io: Io, path: []const u8, perm: u32) !void {
+    std.debug.assert(path.len > 0);
     _ = perm;
     try Dir.createDir(.cwd(), io, path, .default_dir);
 }
 
 /// MkdirAll creates a directory named path, along with any necessary parents.
 pub fn mkdirAll(io: Io, path: []const u8, perm: u32) !void {
+    std.debug.assert(path.len > 0);
     _ = perm;
     try Dir.createDirPath(.cwd(), io, path);
 }
 
 /// Remove removes the named file or directory.
 pub fn remove(io: Io, path: []const u8) !void {
+    std.debug.assert(path.len > 0);
     Dir.deleteFile(.cwd(), io, path) catch |err| switch (err) {
         error.IsDir => try Dir.deleteDir(.cwd(), io, path),
         else => |e| return e,
@@ -199,16 +214,18 @@ pub fn remove(io: Io, path: []const u8) !void {
 
 /// RemoveAll removes path and any children it contains.
 pub fn removeAll(io: Io, path: []const u8) !void {
+    std.debug.assert(path.len > 0);
     try Dir.deleteTree(.cwd(), io, path);
 }
 
 /// Stat returns a FileInfo describing the named file.
 pub fn stat(io: Io, path: []const u8) !FileInfo {
+    std.debug.assert(path.len > 0);
     const st = try Dir.statFile(.cwd(), io, path, .{});
     return FileInfo{
         .name = std.fs.path.basename(path),
         .size = st.size,
-        .mode = @intFromEnum(st.permissions),
+        .mode = @backingInt(st.permissions),
         .mod_time = @truncate(st.mtime.nanoseconds),
         .is_dir = st.kind == .directory,
     };
@@ -216,6 +233,7 @@ pub fn stat(io: Io, path: []const u8) !FileInfo {
 
 /// ReadDir reads the named directory, returning all its directory entries sorted by filename.
 pub fn readDir(allocator: Allocator, io: Io, path: []const u8) ![]DirEntry {
+    std.debug.assert(path.len > 0);
     const dir = try Dir.openDir(.cwd(), io, path, .{ .iterate = true });
     defer dir.close(io);
 
@@ -280,8 +298,10 @@ pub fn readlink(allocator: Allocator, io: Io, path: []const u8) ![]u8 {
 
 /// Chmod changes the mode of the named file to mode.
 pub fn chmod(io: Io, path: []const u8, mode: u32) !void {
-    const perms = StdFile.Permissions.fromMode(@intCast(mode));
-    try Dir.setFilePermissions(.cwd(), io, path, perms, .{});
+    if (builtin.os.tag != .windows) {
+        const perms = StdFile.Permissions.fromMode(@intCast(mode));
+        try Dir.setFilePermissions(.cwd(), io, path, perms, .{});
+    }
 }
 
 /// IsNotExist returns a boolean indicating whether the error is known to
@@ -320,7 +340,7 @@ test "os.file: create, write, seek, read, remove" {
 
     // 1. Create and write
     var f = try create(io, test_path);
-    defer f.close();
+    defer _ = f.close() catch {};
 
     _ = try f.write("Hello from stdgo os.File!\n");
     _ = try f.writeString("Second line of content.\n");
@@ -363,7 +383,7 @@ test "os.file: create, write, seek, read, remove" {
     try rename(io, test_path, new_path);
     try testing.expectError(error.FileNotFound, open(io, test_path));
     var f_renamed = try open(io, new_path);
-    f_renamed.close();
+    try f_renamed.close();
 
     // 8. Symlink & Readlink
     const sym_path = test_dir ++ "/symlink.txt";

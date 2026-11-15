@@ -14,6 +14,10 @@ pub const Error = error{
     ShortRead,
     MalformedMIMEHeader,
     ProtocolError,
+    LineTooLong,
+    TooManyContinuationLines,
+    TooManyHeaders,
+    DotBodyTooLarge,
 };
 
 /// CanonicalMIMEHeaderKey returns the canonical format of the MIME header key s.
@@ -126,6 +130,11 @@ pub const Reader = struct {
     allocator: Allocator,
     r: *std.Io.Reader,
 
+    pub const line_bytes_max: usize = 64 * 1024;
+    pub const continued_lines_max: usize = 500;
+    pub const headers_count_max: usize = 1000;
+    pub const dot_bytes_max: usize = 32 * 1024 * 1024;
+
     pub fn init(allocator: Allocator, r: *std.Io.Reader) Reader {
         return .{
             .allocator = allocator,
@@ -141,7 +150,7 @@ pub const Reader = struct {
         errdefer line_buf.deinit();
 
         var read_any = false;
-        while (true) {
+        while (line_buf.len() < line_bytes_max) {
             const b = self.r.takeByte() catch |err| {
                 if (err == error.EndOfStream or err == io.Error.EndOfStream) {
                     if (read_any) {
@@ -164,6 +173,8 @@ pub const Reader = struct {
                 return try line_buf.toOwnedSlice();
             }
             try line_buf.writeByte(b);
+        } else {
+            return Error.LineTooLong;
         }
     }
 
@@ -176,7 +187,8 @@ pub const Reader = struct {
         _ = try full.write(first);
         self.allocator.free(first);
 
-        while (true) {
+        var continuation_count: usize = 0;
+        while (continuation_count < continued_lines_max) : (continuation_count += 1) {
             // Peek at next character to see if it's space or tab
             const b = self.r.takeByte() catch |err| {
                 if (err == error.EndOfStream or err == io.Error.EndOfStream) break;
@@ -203,6 +215,8 @@ pub const Reader = struct {
                 _ = self.r.seek(-1, .current) catch {};
                 break;
             }
+        } else {
+            return Error.TooManyContinuationLines;
         }
 
         return try full.toOwnedSlice();
@@ -214,7 +228,8 @@ pub const Reader = struct {
         var hdr = MIMEHeader.init(self.allocator);
         errdefer hdr.deinit();
 
-        while (true) {
+        var header_count: usize = 0;
+        while (header_count < headers_count_max) : (header_count += 1) {
             const line = try self.readLine() orelse break;
             defer self.allocator.free(line);
 
@@ -231,6 +246,8 @@ pub const Reader = struct {
             const val = line[val_start..];
 
             try hdr.add(key, val);
+        } else {
+            return Error.TooManyHeaders;
         }
 
         return hdr;
@@ -244,7 +261,7 @@ pub const Reader = struct {
         var body = bytes.Buffer.init(self.allocator);
         errdefer body.deinit();
 
-        while (true) {
+        while (body.len() < dot_bytes_max) {
             const line = try self.readLine() orelse return Error.ProtocolError;
             defer self.allocator.free(line);
 
@@ -261,6 +278,8 @@ pub const Reader = struct {
 
             _ = try body.write(to_write);
             _ = try body.write("\n");
+        } else {
+            return Error.DotBodyTooLarge;
         }
 
         return try body.toOwnedSlice();

@@ -575,8 +575,8 @@ pub const Template = struct {
         return self;
     }
 
-    pub fn funcMap(self: *Template, funcs: FuncMap) *Template {
-        _ = self.inner.funcMap(funcs);
+    pub fn funcMap(self: *Template, funcs: FuncMap) !*Template {
+        _ = try self.inner.funcMap(funcs);
         return self;
     }
 

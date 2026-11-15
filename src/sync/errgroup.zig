@@ -124,7 +124,11 @@ pub const Group = struct {
         };
 
         self.mutex.lock();
-        self.threads.append(self.allocator, thread) catch {};
+        self.threads.append(self.allocator, thread) catch |append_err| {
+            self.mutex.unlock();
+            thread.detach();
+            return append_err;
+        };
         self.mutex.unlock();
     }
 

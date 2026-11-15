@@ -77,7 +77,8 @@ pub const Client = struct {
         var line_list: std.ArrayListUnmanaged(u8) = .empty;
         errdefer line_list.deinit(self.allocator);
 
-        while (true) {
+        const line_bytes_max: usize = 8192;
+        while (line_list.items.len < line_bytes_max) {
             if (self.read_pos >= self.read_len) {
                 const n = try self.conn.read(&self.read_buf);
                 if (n == 0) return error.EndOfStream;
@@ -95,6 +96,8 @@ pub const Client = struct {
                 return line_list.toOwnedSlice(self.allocator);
             }
             try line_list.append(self.allocator, b);
+        } else {
+            return error.SmtpLineTooLong;
         }
     }
 
@@ -107,8 +110,10 @@ pub const Client = struct {
         }
 
         var code: u16 = 0;
+        const response_lines_max: usize = 128;
+        var line_count: usize = 0;
 
-        while (true) {
+        while (line_count < response_lines_max) : (line_count += 1) {
             const raw_line = try self.readLine();
             if (raw_line.len < 3) {
                 self.allocator.free(raw_line);
@@ -129,6 +134,8 @@ pub const Client = struct {
             self.allocator.free(raw_line);
 
             if (!is_continuation) break;
+        } else {
+            return error.SmtpResponseTooManyLines;
         }
 
         return .{
@@ -146,12 +153,14 @@ pub const Client = struct {
     pub fn cmd(self: *Client, comptime fmt: []const u8, args: anytype) !Response {
         var cmd_buf: [1024]u8 = undefined;
         const msg = std.fmt.bufPrint(&cmd_buf, fmt ++ "\r\n", args) catch return error.SmtpCommandFailed;
-        _ = try self.conn.write(msg);
+        const sent = try self.conn.write(msg);
+        std.debug.assert(sent == msg.len);
         return self.readResponse();
     }
 
     /// Sends EHLO and parses supported extensions.
     pub fn ehlo(self: *Client, local_name: []const u8) !void {
+        std.debug.assert(local_name.len > 0);
         const resp = try self.cmd("EHLO {s}", .{local_name});
         defer self.freeResponse(resp);
 
@@ -185,6 +194,7 @@ pub const Client = struct {
 
     /// Sends HELO (basic SMTP).
     pub fn hello(self: *Client, local_name: []const u8) !void {
+        std.debug.assert(local_name.len > 0);
         const resp = try self.cmd("HELO {s}", .{local_name});
         defer self.freeResponse(resp);
         if (resp.code != 250) return error.SmtpCommandFailed;
@@ -248,6 +258,7 @@ pub const Client = struct {
 
     /// Sends MAIL FROM:<from>.
     pub fn mail(self: *Client, from: []const u8) !void {
+        std.debug.assert(from.len > 0);
         const resp = try self.cmd("MAIL FROM:<{s}>", .{from});
         defer self.freeResponse(resp);
         if (resp.code != 250) return error.SmtpCommandFailed;
@@ -255,6 +266,7 @@ pub const Client = struct {
 
     /// Sends RCPT TO:<to>.
     pub fn rcpt(self: *Client, to: []const u8) !void {
+        std.debug.assert(to.len > 0);
         const resp = try self.cmd("RCPT TO:<{s}>", .{to});
         defer self.freeResponse(resp);
         if (resp.code != 250 and resp.code != 251) return error.SmtpCommandFailed;
@@ -284,7 +296,8 @@ pub const Client = struct {
         }
         try out.appendSlice(self.allocator, ".\r\n");
 
-        _ = try self.conn.write(out.items);
+        const sent = try self.conn.write(out.items);
+        std.debug.assert(sent == out.items.len);
 
         const data_resp = try self.readResponse();
         defer self.freeResponse(data_resp);

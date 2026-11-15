@@ -185,21 +185,27 @@ fn readGroupData(allocator: Allocator, options: Options) Error!ReadResult {
 }
 
 fn currentUid() ?u32 {
-    if (builtin.os.tag != .windows) {
-        if (@hasDecl(std.c, "getuid")) {
-            return @intCast(std.c.getuid());
-        }
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.getuid());
+    } else if (builtin.os.tag == .windows) {
+        return null;
+    } else if (builtin.link_libc) {
+        return @intCast(std.c.getuid());
+    } else {
+        @compileError("stdgo.os.user: platform '" ++ @tagName(builtin.os.tag) ++ "' requires linking libc. Please call artifact.linkLibC() in build.zig.");
     }
-    return null;
 }
 
 fn currentGid() ?u32 {
-    if (builtin.os.tag != .windows) {
-        if (@hasDecl(std.c, "getgid")) {
-            return @intCast(std.c.getgid());
-        }
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.getgid());
+    } else if (builtin.os.tag == .windows) {
+        return null;
+    } else if (builtin.link_libc) {
+        return @intCast(std.c.getgid());
+    } else {
+        @compileError("stdgo.os.user: platform '" ++ @tagName(builtin.os.tag) ++ "' requires linking libc. Please call artifact.linkLibC() in build.zig.");
     }
-    return null;
 }
 
 /// Lookup looks up a user by username.
@@ -402,13 +408,19 @@ pub fn current(allocator: Allocator, options: Options) Error!*User {
         const uid_s = std.fmt.bufPrint(&uid_buf, "{d}", .{c_uid}) catch "0";
         if (lookupId(allocator, uid_s, options)) |usr| {
             return usr;
-        } else |_| {}
+        } else |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        }
     }
 
     // 3. Fallback to root or default user
     if (lookup(allocator, "root", options)) |root_usr| {
         return root_usr;
-    } else |_| {}
+    } else |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    }
 
     return error.UnknownUser;
 }
@@ -553,9 +565,10 @@ test "os/user live system root lookup" {
         .io = threaded.io(),
     };
 
-    if (lookupId(allocator, "0", opts)) |root_u| {
-        defer root_u.deinit();
-        try testing.expectEqualStrings("0", root_u.uid);
-        try testing.expectEqualStrings("root", root_u.username);
-    } else |_| {}
+    if (builtin.os.tag == .windows) return;
+
+    const root_u = try lookupId(allocator, "0", opts);
+    defer root_u.deinit();
+    try testing.expectEqualStrings("0", root_u.uid);
+    try testing.expectEqualStrings("root", root_u.username);
 }

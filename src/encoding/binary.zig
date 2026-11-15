@@ -142,7 +142,8 @@ pub fn varint(buf: []const u8) Error!VarintResult {
 /// Read reads structured binary data from r into data.
 pub fn read(r: *io.Reader, endian: Endian, comptime T: type) anyerror!T {
     var buf: [@sizeOf(T)]u8 = undefined;
-    _ = try io.readFull(r, &buf);
+    const n = try io.readFull(r, &buf);
+    std.debug.assert(n == buf.len);
     return switch (endian) {
         .little => std.mem.readInt(T, &buf, .little),
         .big => std.mem.readInt(T, &buf, .big),

@@ -8,11 +8,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Child = std.process.Child;
 
-pub const Error = error{
-    ExitError,
-    CommandFailed,
-    StreamTooLong,
-} || std.process.SpawnError || Child.WaitError || Allocator.Error || context.Error;
+pub const Error = anyerror;
 
 /// Cmd represents an external command being prepared or run.
 pub const Cmd = struct {
@@ -28,6 +24,9 @@ pub const Cmd = struct {
 
     /// Run starts the specified command and waits for it to complete.
     pub fn run(self: *Cmd, io: Io) Error!Child.Term {
+        std.debug.assert(self.argv.len > 0);
+        std.debug.assert(self.argv[0].len > 0);
+
         if (self.ctx) |c| {
             if (c.err()) |e| return e;
         }
@@ -62,6 +61,7 @@ pub const Cmd = struct {
         if (self.ctx) |ctx_val| {
             const Watchdog = struct {
                 fn runWatchdog(done_ptr: *std.atomic.Value(bool), s_ptr: *State, c_io: Io, c_ctx: context.Context) void {
+                    const watchdog_poll_interval_ns: u64 = 5 * std.time.ns_per_ms;
                     while (!done_ptr.load(.acquire)) {
                         if (c_ctx.err() != null) {
                             s_ptr.mutex.lock();
@@ -80,17 +80,17 @@ pub const Cmd = struct {
                                     }
                                 } else {
                                     if (s_ptr.child.id) |handle| {
-                                        _ = std.os.windows.ntdll.NtTerminateProcess(handle, 1);
+                                        _ = std.os.windows.ntdll.NtTerminateProcess(handle, @fromBackingInt(@as(u32, 1)));
                                     }
                                 }
                             }
                             break;
                         }
-                        c_io.sleep(std.Io.Duration.fromNanoseconds(5 * std.time.ns_per_ms), .awake) catch {};
+                        c_io.sleep(std.Io.Duration.fromNanoseconds(watchdog_poll_interval_ns), .awake) catch {};
                     }
                 }
             };
-            watchdog_thread = std.Thread.spawn(.{}, Watchdog.runWatchdog, .{ &watchdog_done, &state, io, ctx_val }) catch null;
+            watchdog_thread = try std.Thread.spawn(.{}, Watchdog.runWatchdog, .{ &watchdog_done, &state, io, ctx_val });
         }
 
         // Pipe stdin if provided
@@ -98,8 +98,8 @@ pub const Cmd = struct {
             if (state.child.stdin) |*in_file| {
                 var w_scratch: [2048]u8 = undefined;
                 var file_w = in_file.writerStreaming(io, &w_scratch);
-                _ = io_mod.copy(&file_w.interface, r_in) catch {};
-                file_w.interface.flush() catch {};
+                _ = try io_mod.copy(&file_w.interface, r_in);
+                try file_w.interface.flush();
                 in_file.close(io);
                 state.child.stdin = null;
             }
@@ -110,8 +110,8 @@ pub const Cmd = struct {
             if (state.child.stdout) |*out_file| {
                 var r_scratch: [2048]u8 = undefined;
                 var file_r = out_file.readerStreaming(io, &r_scratch);
-                _ = io_mod.copy(w_out, &file_r.interface) catch {};
-                w_out.flush() catch {};
+                _ = try io_mod.copy(w_out, &file_r.interface);
+                try w_out.flush();
                 out_file.close(io);
                 state.child.stdout = null;
             }
@@ -122,8 +122,8 @@ pub const Cmd = struct {
             if (state.child.stderr) |*err_file| {
                 var r_scratch: [2048]u8 = undefined;
                 var file_r = err_file.readerStreaming(io, &r_scratch);
-                _ = io_mod.copy(w_err, &file_r.interface) catch {};
-                w_err.flush() catch {};
+                _ = try io_mod.copy(w_err, &file_r.interface);
+                try w_err.flush();
                 err_file.close(io);
                 state.child.stderr = null;
             }
@@ -186,6 +186,8 @@ pub const Cmd = struct {
 
 /// Command returns the Cmd struct to execute the named program with the given arguments.
 pub fn command(allocator: Allocator, argv: []const []const u8) Cmd {
+    std.debug.assert(argv.len > 0);
+    std.debug.assert(argv[0].len > 0);
     return .{
         .allocator = allocator,
         .argv = argv,
@@ -194,6 +196,8 @@ pub fn command(allocator: Allocator, argv: []const []const u8) Cmd {
 
 /// CommandContext is like Command but includes a context.
 pub fn commandContext(allocator: Allocator, ctx: context.Context, argv: []const []const u8) Cmd {
+    std.debug.assert(argv.len > 0);
+    std.debug.assert(argv[0].len > 0);
     return .{
         .allocator = allocator,
         .argv = argv,

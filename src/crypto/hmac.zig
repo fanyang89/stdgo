@@ -34,7 +34,7 @@ pub const Hmac = struct {
         if (key.len > b_size) {
             // Key is longer than block size: key = hash(key)
             inner_h.reset();
-            _ = inner_h.write(key) catch {};
+            _ = inner_h.write(key) catch unreachable;
             const sum_slice = inner_h.sum(key_buf[0..h_size]);
             _ = sum_slice;
             inner_h.reset();
@@ -54,7 +54,7 @@ pub const Hmac = struct {
     /// Reset resets the HMAC state to start processing a new message with the same key.
     pub fn reset(self: *Hmac) void {
         self.inner_hash.reset();
-        _ = self.inner_hash.write(self.ipad[0..self.block_size]) catch {};
+        _ = self.inner_hash.write(self.ipad[0..self.block_size]) catch unreachable;
     }
 
     /// Write writes message data to the HMAC.
@@ -69,8 +69,8 @@ pub const Hmac = struct {
         const inner_digest = self.inner_hash.sum(inner_sum_buf[0..self.hash_size]);
 
         self.outer_hash.reset();
-        _ = self.outer_hash.write(self.opad[0..self.block_size]) catch {};
-        _ = self.outer_hash.write(inner_digest) catch {};
+        _ = self.outer_hash.write(self.opad[0..self.block_size]) catch unreachable;
+        _ = self.outer_hash.write(inner_digest) catch unreachable;
         return self.outer_hash.sum(out);
     }
 
@@ -150,7 +150,7 @@ pub fn sha256(key: []const u8, message: []const u8, out: *[32]u8) void {
     var inner_d = sha256_mod.New();
     var outer_d = sha256_mod.New();
     var h = Hmac.init(inner_d.hash(), outer_d.hash(), key);
-    _ = h.write(message) catch {};
+    _ = h.write(message) catch unreachable;
     _ = h.sum(out);
 }
 
@@ -160,7 +160,7 @@ pub fn md5(key: []const u8, message: []const u8, out: *[16]u8) void {
     var inner_d = md5_mod.New();
     var outer_d = md5_mod.New();
     var h = Hmac.init(inner_d.hash(), outer_d.hash(), key);
-    _ = h.write(message) catch {};
+    _ = h.write(message) catch unreachable;
     _ = h.sum(out);
 }
 

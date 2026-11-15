@@ -139,6 +139,7 @@ pub fn decodeDomainName(
 
 /// Builds a DNS query packet for `name` and `qtype`.
 pub fn buildQuery(id: u16, name: []const u8, qtype: RecordType, buf: []u8) !usize {
+    std.debug.assert(name.len > 0);
     if (buf.len < 12) return error.DnsPacketTooShort;
 
     // Header (12 bytes)
@@ -154,7 +155,7 @@ pub fn buildQuery(id: u16, name: []const u8, qtype: RecordType, buf: []u8) !usiz
     var pos = 12 + name_len;
 
     if (pos + 4 > buf.len) return error.DnsPacketTooShort;
-    std.mem.writeInt(u16, buf[pos..][0..2], @intFromEnum(qtype), .big);
+    std.mem.writeInt(u16, buf[pos..][0..2], @backingInt(qtype), .big);
     std.mem.writeInt(u16, buf[pos + 2 ..][0..2], 1, .big); // QCLASS: IN (1)
     pos += 4;
 
@@ -167,6 +168,7 @@ pub const Resolver = struct {
 
     /// Look up host IPv4 and IPv6 addresses as string slices.
     pub fn lookupHost(self: Resolver, allocator: Allocator, io: std.Io, host: []const u8) ![][]const u8 {
+        std.debug.assert(host.len > 0);
         const ips = try self.lookupIP(allocator, io, host);
         defer allocator.free(ips);
 
@@ -187,6 +189,7 @@ pub const Resolver = struct {
 
     /// Look up host addresses returning IP structs.
     pub fn lookupIP(self: Resolver, allocator: Allocator, io: std.Io, host: []const u8) ![]IP {
+        std.debug.assert(host.len > 0);
         var list: std.ArrayListUnmanaged(IP) = .empty;
         errdefer list.deinit(allocator);
 
@@ -224,6 +227,7 @@ pub const Resolver = struct {
 
     /// Look up CNAME record.
     pub fn lookupCNAME(self: Resolver, allocator: Allocator, io: std.Io, host: []const u8) ![]const u8 {
+        std.debug.assert(host.len > 0);
         const records = try self.queryRaw(allocator, io, host, .CNAME);
         defer {
             for (records) |r| allocator.free(r.data);
@@ -241,6 +245,7 @@ pub const Resolver = struct {
 
     /// Look up TXT records.
     pub fn lookupTXT(self: Resolver, allocator: Allocator, io: std.Io, host: []const u8) ![][]const u8 {
+        std.debug.assert(host.len > 0);
         const records = try self.queryRaw(allocator, io, host, .TXT);
         defer {
             for (records) |r| allocator.free(r.data);
@@ -265,6 +270,7 @@ pub const Resolver = struct {
 
     /// Look up MX records sorted by preference.
     pub fn lookupMX(self: Resolver, allocator: Allocator, io: std.Io, host: []const u8) ![]MX {
+        std.debug.assert(host.len > 0);
         const records = try self.queryRaw(allocator, io, host, .MX);
         defer {
             for (records) |r| allocator.free(r.data);
@@ -310,6 +316,7 @@ pub const Resolver = struct {
         host: []const u8,
         qtype: RecordType,
     ) ![]RawRecord {
+        std.debug.assert(host.len > 0);
         const uc = try udp_mod.dialUDP(allocator, io, "udp", null, self.nameserver);
         defer uc.close();
 
@@ -317,7 +324,8 @@ pub const Resolver = struct {
         const query_id: u16 = 0x4242;
         const q_len = try buildQuery(query_id, host, qtype, &query_buf);
 
-        _ = try uc.write(query_buf[0..q_len]);
+        const sent = try uc.write(query_buf[0..q_len]);
+        std.debug.assert(sent == q_len);
 
         var resp_buf: [1500]u8 = undefined;
         const rn = try uc.read(&resp_buf);
@@ -358,7 +366,7 @@ pub const Resolver = struct {
 
             if (offset + 10 > packet.len) return error.DnsPacketTooShort;
             const rtype_val = std.mem.readInt(u16, packet[offset..][0..2], .big);
-            const rtype: RecordType = @enumFromInt(rtype_val);
+            const rtype: RecordType = @fromBackingInt(@intCast(rtype_val));
             const ttl = std.mem.readInt(u32, packet[offset + 4 ..][0..4], .big);
             const rdlength = std.mem.readInt(u16, packet[offset + 8 ..][0..2], .big);
             offset += 10;

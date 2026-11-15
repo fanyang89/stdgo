@@ -440,7 +440,8 @@ pub fn encode(allocator: Allocator, img: *const RGBAImage) ![]u8 {
     defer lzw_buffer.deinit();
 
     var lzw_w = try lzw.newWriter(lzw_buffer.writer(), .LSB, lit_width);
-    _ = try lzw_w.write(pixel_indices);
+    const written = try lzw_w.write(pixel_indices);
+    std.debug.assert(written == pixel_indices.len);
     try lzw_w.close();
 
     // Write LZW sub-blocks (each max 255 bytes)

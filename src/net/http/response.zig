@@ -215,13 +215,17 @@ pub const ResponseBodyReader = struct {
                 break;
             }
             if (b == ';') {
-                while (true) {
+                const chunk_extension_bytes_max: usize = 1024;
+                var ext_len: usize = 0;
+                while (ext_len < chunk_extension_bytes_max) : (ext_len += 1) {
                     const ext_b = try self.readByte();
                     if (ext_b == '\r') {
                         const lf = try self.readByte();
                         if (lf != '\n') return error.MalformedChunkHeader;
                         break;
                     }
+                } else {
+                    return error.ChunkHeaderTooLarge;
                 }
                 break;
             }

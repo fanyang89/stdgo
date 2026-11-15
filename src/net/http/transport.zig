@@ -183,6 +183,7 @@ pub const Transport = struct {
         var stream_r = stream.reader(io, &read_buf);
         const r = &stream_r.interface;
 
+        const proxy_head_bytes_max = read_buf.len;
         while (true) {
             const buffered = r.buffered();
             if (std.mem.indexOf(u8, buffered, "\r\n\r\n")) |idx| {
@@ -193,7 +194,13 @@ pub const Transport = struct {
                 r.toss(idx + 4);
                 break;
             }
-            try r.fillMore();
+            if (buffered.len >= proxy_head_bytes_max) {
+                return error.ProxyResponseTooLarge;
+            }
+            r.fillMore() catch |err| switch (err) {
+                error.EndOfStream => return error.ConnectionClosedPrematurely,
+                else => |e| return e,
+            };
         }
     }
 

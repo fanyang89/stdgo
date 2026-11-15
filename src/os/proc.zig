@@ -12,22 +12,28 @@ const builtin = @import("builtin");
 
 /// Getpid returns the process id of the caller.
 pub fn getpid() i32 {
-    if (builtin.os.tag != .windows) {
-        if (@hasDecl(std.c, "getpid")) {
-            return @intCast(std.c.getpid());
-        }
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.getpid());
+    } else if (builtin.os.tag == .windows) {
+        return @intCast(std.os.windows.GetCurrentProcessId());
+    } else if (builtin.link_libc) {
+        return @intCast(std.c.getpid());
+    } else {
+        @compileError("stdgo.os.getpid: platform '" ++ @tagName(builtin.os.tag) ++ "' requires linking libc. Please call artifact.linkLibC() in build.zig.");
     }
-    return 1;
 }
 
 /// Getppid returns the process id of the caller's parent.
 pub fn getppid() i32 {
-    if (builtin.os.tag != .windows) {
-        if (@hasDecl(std.c, "getppid")) {
-            return @intCast(std.c.getppid());
-        }
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.getppid());
+    } else if (builtin.os.tag == .windows) {
+        return 0;
+    } else if (builtin.link_libc) {
+        return @intCast(std.c.getppid());
+    } else {
+        @compileError("stdgo.os.getppid: platform '" ++ @tagName(builtin.os.tag) ++ "' requires linking libc. Please call artifact.linkLibC() in build.zig.");
     }
-    return 0;
 }
 
 /// Hostname returns the host name reported by the kernel.
@@ -38,17 +44,15 @@ pub fn hostname(allocator: Allocator, env: ?*const EnvironMap) ![]u8 {
         if (e.get("COMPUTERNAME")) |h| return try allocator.dupe(u8, h);
     }
 
-    if (builtin.os.tag != .windows) {
-        if (@hasDecl(std.c, "gethostname")) {
-            var buf: [256]u8 = undefined;
-            if (std.c.gethostname(&buf, buf.len) == 0) {
-                const len = mem.indexOfScalar(u8, &buf, 0) orelse buf.len;
-                return try allocator.dupe(u8, buf[0..len]);
-            }
-        }
+    if (builtin.os.tag == .windows) {
+        return error.HostnameNotFound;
+    } else if (builtin.os.tag == .linux or builtin.link_libc) {
+        var buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
+        const h = try std.posix.gethostname(&buf);
+        return try allocator.dupe(u8, h);
+    } else {
+        @compileError("stdgo.os.hostname: platform '" ++ @tagName(builtin.os.tag) ++ "' requires linking libc. Please call artifact.linkLibC() in build.zig.");
     }
-
-    return try allocator.dupe(u8, "localhost");
 }
 
 /// Getwd returns a rooted path name corresponding to the current directory.

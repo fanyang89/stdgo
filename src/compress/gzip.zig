@@ -95,7 +95,8 @@ pub const Reader = struct {
 
     pub fn init(r: *io.Reader) anyerror!Reader {
         var hdr: [10]u8 = undefined;
-        _ = try io.readFull(r, &hdr);
+        const n_hdr = try io.readFull(r, &hdr);
+        std.debug.assert(n_hdr == hdr.len);
 
         if (hdr[0] != gzip_id1 or hdr[1] != gzip_id2 or hdr[2] != gzip_deflate) {
             return Error.InvalidHeader;
@@ -122,7 +123,8 @@ pub const Reader = struct {
             var n: usize = 0;
             while (n < self.name_buf.len) : (n += 1) {
                 var b: [1]u8 = undefined;
-                _ = try io.readFull(r, &b);
+                const n_b = try io.readFull(r, &b);
+                std.debug.assert(n_b == b.len);
                 if (b[0] == 0) break;
                 self.name_buf[n] = b[0];
             }

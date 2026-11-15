@@ -436,10 +436,10 @@ pub const Template = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn funcMap(self: *Template, funcs: FuncMap) *Template {
+    pub fn funcMap(self: *Template, funcs: FuncMap) !*Template {
         var it = funcs.iterator();
         while (it.next()) |e| {
-            self.funcs.put(e.key_ptr.*, e.value_ptr.*) catch {};
+            try self.funcs.put(e.key_ptr.*, e.value_ptr.*);
         }
         return self;
     }
@@ -1083,26 +1083,26 @@ pub const Template = struct {
             }
         };
 
-        self.funcs.put("upper", DefaultFuncs.upper) catch {};
-        self.funcs.put("lower", DefaultFuncs.lower) catch {};
-        self.funcs.put("len", DefaultFuncs.len) catch {};
-        self.funcs.put("not", DefaultFuncs.not) catch {};
-        self.funcs.put("eq", DefaultFuncs.eq) catch {};
-        self.funcs.put("ne", DefaultFuncs.ne) catch {};
-        self.funcs.put("lt", DefaultFuncs.lt) catch {};
-        self.funcs.put("le", DefaultFuncs.le) catch {};
-        self.funcs.put("gt", DefaultFuncs.gt) catch {};
-        self.funcs.put("ge", DefaultFuncs.ge) catch {};
-        self.funcs.put("and", DefaultFuncs.andFn) catch {};
-        self.funcs.put("or", DefaultFuncs.orFn) catch {};
-        self.funcs.put("print", DefaultFuncs.print) catch {};
-        self.funcs.put("println", DefaultFuncs.println) catch {};
-        self.funcs.put("printf", DefaultFuncs.printf) catch {};
-        self.funcs.put("index", DefaultFuncs.index) catch {};
-        self.funcs.put("slice", DefaultFuncs.slice) catch {};
-        self.funcs.put("add", DefaultFuncs.add) catch {};
-        self.funcs.put("sub", DefaultFuncs.sub) catch {};
-        self.funcs.put("mul", DefaultFuncs.mul) catch {};
+        self.funcs.put("upper", DefaultFuncs.upper) catch unreachable;
+        self.funcs.put("lower", DefaultFuncs.lower) catch unreachable;
+        self.funcs.put("len", DefaultFuncs.len) catch unreachable;
+        self.funcs.put("not", DefaultFuncs.not) catch unreachable;
+        self.funcs.put("eq", DefaultFuncs.eq) catch unreachable;
+        self.funcs.put("ne", DefaultFuncs.ne) catch unreachable;
+        self.funcs.put("lt", DefaultFuncs.lt) catch unreachable;
+        self.funcs.put("le", DefaultFuncs.le) catch unreachable;
+        self.funcs.put("gt", DefaultFuncs.gt) catch unreachable;
+        self.funcs.put("ge", DefaultFuncs.ge) catch unreachable;
+        self.funcs.put("and", DefaultFuncs.andFn) catch unreachable;
+        self.funcs.put("or", DefaultFuncs.orFn) catch unreachable;
+        self.funcs.put("print", DefaultFuncs.print) catch unreachable;
+        self.funcs.put("println", DefaultFuncs.println) catch unreachable;
+        self.funcs.put("printf", DefaultFuncs.printf) catch unreachable;
+        self.funcs.put("index", DefaultFuncs.index) catch unreachable;
+        self.funcs.put("slice", DefaultFuncs.slice) catch unreachable;
+        self.funcs.put("add", DefaultFuncs.add) catch unreachable;
+        self.funcs.put("sub", DefaultFuncs.sub) catch unreachable;
+        self.funcs.put("mul", DefaultFuncs.mul) catch unreachable;
     }
 };
 
@@ -1922,6 +1922,21 @@ test "text.template: custom functions via addFunc and funcMap" {
 
     try tmpl.execute(buf.writer(), .{ .Word = "Zig" });
     try testing.expectEqualStrings("Piped: [Zig!] | Call: ZigZigZig", buf.string());
+
+    // Test funcMap with batch function registration
+    var f_map = FuncMap.init(testing.allocator);
+    defer f_map.deinit();
+    try f_map.put("exclaim", Helpers.exclaim);
+
+    var tmpl2 = Template.new(testing.allocator, "func_map_demo");
+    defer tmpl2.deinit();
+    _ = try tmpl2.funcMap(f_map);
+    _ = try tmpl2.parse("{{ .Word | exclaim }}");
+
+    var buf2 = bytes.Buffer.init(testing.allocator);
+    defer buf2.deinit();
+    try tmpl2.execute(buf2.writer(), .{ .Word = "Hi" });
+    try testing.expectEqualStrings("[Hi!]", buf2.string());
 }
 
 test "text.template: define and template basic composition" {

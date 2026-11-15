@@ -124,7 +124,10 @@ pub const PooledConn = struct {
             }
         };
 
-        const watchdog_thread = std.Thread.spawn(.{}, Watchdog.run, .{ &done_flag, self, ctx, self.db.io }) catch null;
+        const watchdog_thread: ?std.Thread = if (ctx.done())
+            try std.Thread.spawn(.{}, Watchdog.run, .{ &done_flag, self, ctx, self.db.io })
+        else
+            null;
         defer {
             done_flag.store(true, .release);
             if (watchdog_thread) |wt| wt.join();
@@ -158,7 +161,10 @@ pub const PooledConn = struct {
             }
         };
 
-        const watchdog_thread = std.Thread.spawn(.{}, Watchdog.run, .{ &done_flag, self, ctx, self.db.io }) catch null;
+        const watchdog_thread: ?std.Thread = if (ctx.done())
+            try std.Thread.spawn(.{}, Watchdog.run, .{ &done_flag, self, ctx, self.db.io })
+        else
+            null;
         defer {
             done_flag.store(true, .release);
             if (watchdog_thread) |wt| wt.join();
@@ -217,7 +223,10 @@ pub const PooledConn = struct {
             }
         };
 
-        const watchdog_thread = std.Thread.spawn(.{}, Watchdog.run, .{ &done_flag, self, ctx, self.db.io }) catch null;
+        const watchdog_thread: ?std.Thread = if (ctx.done())
+            try std.Thread.spawn(.{}, Watchdog.run, .{ &done_flag, self, ctx, self.db.io })
+        else
+            null;
         defer {
             done_flag.store(true, .release);
             if (watchdog_thread) |wt| wt.join();
@@ -392,7 +401,10 @@ pub const DB = struct {
                 }
                 pc.last_used_at_ns = now;
                 pc.from_pool = true;
-                self.active_conns.append(self.allocator, pc) catch {};
+                self.active_conns.append(self.allocator, pc) catch |append_err| {
+                    self.free_conns.append(self.allocator, pc) catch {};
+                    return append_err;
+                };
                 return pc;
             }
 
@@ -401,14 +413,20 @@ pub const DB = struct {
                 self.num_open += 1;
                 // Temporarily release mutex while opening connection to avoid blocking other threads
                 self.mutex.unlock();
-                const raw_conn = self.driver_instance.open(self.dsn) catch |err| {
+                var raw_conn = self.driver_instance.open(self.dsn) catch |err| {
                     self.mutex.lock();
                     self.num_open -= 1;
                     return err;
                 };
                 self.mutex.lock();
 
-                const pc = try self.allocator.create(PooledConn);
+                const pc = self.allocator.create(PooledConn) catch |create_err| {
+                    self.mutex.unlock();
+                    raw_conn.close();
+                    self.mutex.lock();
+                    self.num_open -= 1;
+                    return create_err;
+                };
                 pc.* = .{
                     .raw = raw_conn,
                     .created_at_ns = self.currentNanoTimestamp(),
@@ -416,7 +434,12 @@ pub const DB = struct {
                     .db = self,
                     .from_pool = false,
                 };
-                self.active_conns.append(self.allocator, pc) catch {};
+                self.active_conns.append(self.allocator, pc) catch |append_err| {
+                    pc.raw.close();
+                    self.allocator.destroy(pc);
+                    self.num_open -= 1;
+                    return append_err;
+                };
                 return pc;
             }
 
