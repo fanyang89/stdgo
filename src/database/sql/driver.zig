@@ -24,6 +24,28 @@ pub const Value = union(enum) {
     }
 };
 
+/// ErrBadConn should be returned by a driver when a connection is in a bad state
+/// (e.g. server closed connection) and may be retried by the pool with a fresh connection.
+pub const ErrBadConn = error.ErrBadConn;
+
+/// IsolationLevel is the transaction isolation level stored in TxOptions.
+pub const IsolationLevel = enum {
+    default,
+    read_uncommitted,
+    read_committed,
+    write_committed,
+    repeatable_read,
+    snapshot,
+    serializable,
+    linearizable,
+};
+
+/// TxOptions holds the transaction options (isolation level and read-only flag).
+pub const TxOptions = struct {
+    isolation: IsolationLevel = .default,
+    read_only: bool = false,
+};
+
 /// Result of an Exec query (e.g. INSERT, UPDATE, DELETE).
 pub const Result = struct {
     last_insert_id: i64 = 0,
@@ -47,6 +69,8 @@ pub const Rows = struct {
         columns: *const fn (ctx: *anyopaque) []const []const u8,
         next: *const fn (ctx: *anyopaque, dest: []Value) bool,
         close: *const fn (ctx: *anyopaque) void,
+        /// Optional: returns the error, if any, that occurred while iterating.
+        err: ?*const fn (ctx: *anyopaque) ?anyerror = null,
     };
 
     pub fn columns(self: *Rows) []const []const u8 {
@@ -59,6 +83,15 @@ pub const Rows = struct {
 
     pub fn close(self: *Rows) void {
         self.vtable.close(self.ptr);
+    }
+
+    /// Err returns the error, if any, that was encountered during iteration.
+    /// Returns null if iteration finished cleanly or was closed.
+    pub fn err(self: *Rows) ?anyerror {
+        if (self.vtable.err) |f| {
+            return f(self.ptr);
+        }
+        return null;
     }
 };
 
@@ -120,12 +153,16 @@ pub const Conn = struct {
         close: *const fn (ctx: *anyopaque) void,
         begin: *const fn (ctx: *anyopaque) anyerror!Tx,
         ping: *const fn (ctx: *anyopaque) anyerror!void,
+        /// Optional: starts a transaction with specific options (isolation level, read-only).
+        beginTx: ?*const fn (ctx: *anyopaque, opts: TxOptions) anyerror!Tx = null,
         /// [Extension to standard Go driver.Conn]
         /// Optional: Interrupts any in-progress query on this connection (e.g. sqlite3_interrupt,
         /// PostgreSQL CancelRequest, MySQL KILL QUERY).
         /// This extension allows GUI clients (such as Qianliyan) and Context cancellation to
         /// abort slow queries out-of-band without destroying the underlying connection or pool.
         interrupt: ?*const fn (ctx: *anyopaque) void = null,
+        /// Optional: returns the detailed error message for the last operation on this connection.
+        lastError: ?*const fn (ctx: *anyopaque) ?[]const u8 = null,
     };
 
     pub fn prepare(self: *Conn, query: []const u8) !Stmt {
@@ -138,6 +175,20 @@ pub const Conn = struct {
 
     pub fn begin(self: *Conn) !Tx {
         return self.vtable.begin(self.ptr);
+    }
+
+    /// BeginTx starts a transaction with the given options.
+    /// If the driver does not implement beginTx and the options are default,
+    /// it falls back to begin(). If non-default options are requested and unsupported,
+    /// it returns error.TxOptionsNotSupported.
+    pub fn beginTx(self: *Conn, opts: TxOptions) !Tx {
+        if (self.vtable.beginTx) |f| {
+            return f(self.ptr, opts);
+        }
+        if (opts.isolation == .default and !opts.read_only) {
+            return self.vtable.begin(self.ptr);
+        }
+        return error.TxOptionsNotSupported;
     }
 
     pub fn ping(self: *Conn) !void {
@@ -153,6 +204,15 @@ pub const Conn = struct {
             return true;
         }
         return false;
+    }
+
+    /// LastError returns the error message for the last operation on this connection,
+    /// or null if no error has occurred or the driver does not support detailed messages.
+    pub fn lastError(self: *Conn) ?[]const u8 {
+        if (self.vtable.lastError) |f| {
+            return f(self.ptr);
+        }
+        return null;
     }
 };
 

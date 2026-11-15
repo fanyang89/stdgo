@@ -68,17 +68,46 @@ pub fn main(init: std.process.Init) !void {
             row_record[2].string,
         });
     }
+    // Verify rows.err() is clean
+    if (rows.err()) |e| {
+        std.debug.print("   -> rows iteration error: {any}\n", .{e});
+    }
     std.debug.print("\n", .{});
 
-    // 6. Transactions (Commit & Rollback)
-    std.debug.print("5. Transactions (ACID Commit & Rollback):\n", .{});
-    // Successful transaction commit:
+    // 6. Single Row Query (db.queryRow & ErrNoRows)
+    std.debug.print("5. Single-row Query (db.queryRow & ErrNoRows):\n", .{});
     {
-        var tx = try db.begin();
+        var row = db.queryRow("SELECT id, name, role FROM users LIMIT 1", &.{});
+        defer row.close();
+        var single_dest: [3]sql.Value = undefined;
+        try row.scan(&single_dest);
+        std.debug.print("   -> Single row scanned: ID {d}, Name '{s}'\n", .{
+            single_dest[0].int,
+            single_dest[1].string,
+        });
+
+        // Demonstrating ErrNoRows on empty result:
+        var empty_row = sql.Row{ .rows = null };
+        defer empty_row.close();
+        var dummy_dest: [1]sql.Value = undefined;
+        empty_row.scan(&dummy_dest) catch |err| switch (err) {
+            error.ErrNoRows => std.debug.print("   -> Empty result handled gracefully with error.ErrNoRows!\n\n", .{}),
+            else => return err,
+        };
+    }
+
+    // 7. Transactions with Isolation Levels (db.beginTx & TxOptions)
+    std.debug.print("6. Transactions (ACID Commit, Rollback, and Isolation Levels):\n", .{});
+    // Successful transaction with serializable isolation:
+    {
+        var tx = try db.beginTx(stdgo.context.background(), .{
+            .isolation = .serializable,
+            .read_only = false,
+        });
         _ = try tx.exec("UPDATE accounts SET balance = balance - 250 WHERE id = 1", &.{});
         _ = try tx.exec("UPDATE accounts SET balance = balance + 250 WHERE id = 2", &.{});
         try tx.commit();
-        std.debug.print("   -> Transaction #1 committed successfully!\n", .{});
+        std.debug.print("   -> Transaction #1 (Serializable) committed successfully!\n", .{});
     }
 
     // Aborted transaction rollback:
@@ -90,8 +119,34 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("   -> Transaction #2 rolled back cleanly on error!\n\n", .{});
     }
 
-    // 7. Concurrent Connection Contention
-    std.debug.print("6. Concurrent Workers Pool Contention (4 threads competing for pool):\n", .{});
+    // 8. Bad Connection Auto-Retry (driver.ErrBadConn)
+    std.debug.print("7. Connection Pool Fault-Tolerance (driver.ErrBadConn Auto-Retry):\n", .{});
+    {
+        // Connection currently in idle pool will fail with ErrBadConn on next attempt
+        state.fail_with_bad_conn_count = 1;
+        std.debug.print("   -> Simulating server-side closed connection in idle pool...\n", .{});
+
+        // db.exec transparently discards bad connection and retries on a fresh one:
+        const retry_res = try db.exec("SELECT 1", &.{});
+        std.debug.print("   -> db.exec auto-retried on fresh connection! Rows Affected: {d}\n\n", .{
+            retry_res.rowsAffected(),
+        });
+    }
+
+    // 9. Out-of-band Query Interruption (db.interruptAll)
+    std.debug.print("8. Out-of-band Interruption (db.interruptAll):\n", .{});
+    {
+        const pc = try db.conn();
+        defer pc.release();
+
+        const signaled = db.interruptAll();
+        std.debug.print("   -> Signaled {d} active in-flight connection(s) to abort out-of-band.\n\n", .{
+            signaled,
+        });
+    }
+
+    // 10. Concurrent Connection Contention
+    std.debug.print("9. Concurrent Workers Pool Contention (4 threads competing for pool):\n", .{});
     const Worker = struct {
         fn workerThread(db_handle: *sql.DB) void {
             for (0..10) |_| {
@@ -114,9 +169,9 @@ pub fn main(init: std.process.Init) !void {
     t3.join();
     t4.join();
 
-    // 8. DB Pool Statistics
+    // 11. DB Pool Statistics
     const st = db.stats();
-    std.debug.print("7. Final Pool Statistics:\n", .{});
+    std.debug.print("10. Final Pool Statistics:\n", .{});
     std.debug.print("   -> Max Open:          {d}\n", .{st.max_open_connections});
     std.debug.print("   -> Current Open:      {d}\n", .{st.open_connections});
     std.debug.print("   -> In-Use:            {d}\n", .{st.in_use});

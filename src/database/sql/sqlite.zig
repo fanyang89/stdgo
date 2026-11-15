@@ -7,6 +7,7 @@
 const std = @import("std");
 const build_options = @import("build_options");
 const driver_pkg = @import("driver.zig");
+const context = @import("../../context.zig");
 const Allocator = std.mem.Allocator;
 const Value = driver_pkg.Value;
 const Result = driver_pkg.Result;
@@ -85,8 +86,10 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
                 .prepare = SQLiteConn.prepare,
                 .close = SQLiteConn.close,
                 .begin = SQLiteConn.begin,
+                .beginTx = SQLiteConn.beginTx,
                 .ping = SQLiteConn.ping,
                 .interrupt = SQLiteConn.interrupt,
+                .lastError = SQLiteConn.lastError,
             },
         };
     }
@@ -133,9 +136,18 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
 
         /// Starts a new SQLite transaction ("BEGIN TRANSACTION").
         fn begin(ctx: *anyopaque) anyerror!driver_pkg.Tx {
+            return beginTx(ctx, .{});
+        }
+
+        /// Starts a new SQLite transaction observing TxOptions.
+        fn beginTx(ctx: *anyopaque, opts: driver_pkg.TxOptions) anyerror!driver_pkg.Tx {
             const self: *SQLiteConn = @ptrCast(@alignCast(ctx));
+            const sql: [*c]const u8 = switch (opts.isolation) {
+                .serializable => if (opts.read_only) "BEGIN DEFERRED" else "BEGIN IMMEDIATE",
+                .default, .read_committed, .read_uncommitted, .repeatable_read, .snapshot, .write_committed, .linearizable => "BEGIN DEFERRED",
+            };
             var errmsg: [*c]u8 = null;
-            if (c.sqlite3_exec(self.db, "BEGIN TRANSACTION", null, null, &errmsg) != c.SQLITE_OK) {
+            if (c.sqlite3_exec(self.db, sql, null, null, &errmsg) != c.SQLITE_OK) {
                 if (errmsg != null) c.sqlite3_free(errmsg);
                 return error.SQLiteTxBeginFailed;
             }
@@ -173,6 +185,16 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
         fn interrupt(ctx: *anyopaque) void {
             const self: *SQLiteConn = @ptrCast(@alignCast(ctx));
             c.sqlite3_interrupt(self.db);
+        }
+
+        /// Returns the last detailed error message on this connection, or null if no error occurred.
+        fn lastError(ctx: *anyopaque) ?[]const u8 {
+            const self: *SQLiteConn = @ptrCast(@alignCast(ctx));
+            const msg_ptr = c.sqlite3_errmsg(self.db);
+            if (msg_ptr == null) return null;
+            const msg = std.mem.span(msg_ptr);
+            if (std.mem.eql(u8, msg, "not an error")) return null;
+            return msg;
         }
     };
 
@@ -262,6 +284,7 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
                     .columns = SQLiteRows.columns,
                     .next = SQLiteRows.next,
                     .close = SQLiteRows.close,
+                    .err = SQLiteRows.err,
                 },
             };
         }
@@ -272,6 +295,7 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
         allocator: Allocator,
         stmt: *c.sqlite3_stmt,
         cols_cached: ?[]const []const u8 = null,
+        last_step_err: ?anyerror = null,
 
         /// Retrieves and caches column names from the current result set.
         fn columns(ctx: *anyopaque) []const []const u8 {
@@ -293,34 +317,51 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
         fn next(ctx: *anyopaque, dest: []Value) bool {
             const self: *SQLiteRows = @ptrCast(@alignCast(ctx));
             const rc = c.sqlite3_step(self.stmt);
-            if (rc != c.SQLITE_ROW) return false;
+            if (rc == c.SQLITE_ROW) {
+                const col_count: usize = @intCast(c.sqlite3_column_count(self.stmt));
+                const limit = @min(dest.len, col_count);
 
-            const col_count: usize = @intCast(c.sqlite3_column_count(self.stmt));
-            const limit = @min(dest.len, col_count);
+                for (0..limit) |i| {
+                    const col_idx: c_int = @intCast(i);
+                    const col_type = c.sqlite3_column_type(self.stmt, col_idx);
+                    dest[i] = switch (col_type) {
+                        c.SQLITE_INTEGER => Value{ .int = c.sqlite3_column_int64(self.stmt, col_idx) },
+                        c.SQLITE_FLOAT => Value{ .float = c.sqlite3_column_double(self.stmt, col_idx) },
+                        c.SQLITE_TEXT => blk: {
+                            const text_ptr = c.sqlite3_column_text(self.stmt, col_idx);
+                            const bytes_len = c.sqlite3_column_bytes(self.stmt, col_idx);
+                            if (text_ptr == null) break :blk Value.null;
+                            break :blk Value{ .string = text_ptr[0..@intCast(bytes_len)] };
+                        },
+                        c.SQLITE_BLOB => blk: {
+                            const blob_ptr: [*c]const u8 = @ptrCast(c.sqlite3_column_blob(self.stmt, col_idx));
+                            const bytes_len = c.sqlite3_column_bytes(self.stmt, col_idx);
+                            if (blob_ptr == null) break :blk Value.null;
+                            break :blk Value{ .bytes = blob_ptr[0..@intCast(bytes_len)] };
+                        },
+                        c.SQLITE_NULL => Value.null,
+                        else => Value.null,
+                    };
+                }
+                return true;
+            }
 
-            for (0..limit) |i| {
-                const col_idx: c_int = @intCast(i);
-                const col_type = c.sqlite3_column_type(self.stmt, col_idx);
-                dest[i] = switch (col_type) {
-                    c.SQLITE_INTEGER => Value{ .int = c.sqlite3_column_int64(self.stmt, col_idx) },
-                    c.SQLITE_FLOAT => Value{ .float = c.sqlite3_column_double(self.stmt, col_idx) },
-                    c.SQLITE_TEXT => blk: {
-                        const text_ptr = c.sqlite3_column_text(self.stmt, col_idx);
-                        const bytes_len = c.sqlite3_column_bytes(self.stmt, col_idx);
-                        if (text_ptr == null) break :blk Value.null;
-                        break :blk Value{ .string = text_ptr[0..@intCast(bytes_len)] };
-                    },
-                    c.SQLITE_BLOB => blk: {
-                        const blob_ptr: [*c]const u8 = @ptrCast(c.sqlite3_column_blob(self.stmt, col_idx));
-                        const bytes_len = c.sqlite3_column_bytes(self.stmt, col_idx);
-                        if (blob_ptr == null) break :blk Value.null;
-                        break :blk Value{ .bytes = blob_ptr[0..@intCast(bytes_len)] };
-                    },
-                    c.SQLITE_NULL => Value.null,
-                    else => Value.null,
+            if (rc != c.SQLITE_DONE) {
+                self.last_step_err = switch (rc) {
+                    c.SQLITE_INTERRUPT => error.Interrupted,
+                    c.SQLITE_BUSY => error.Busy,
+                    c.SQLITE_LOCKED => error.Locked,
+                    c.SQLITE_NOMEM => error.OutOfMemory,
+                    else => error.SQLiteStepFailed,
                 };
             }
-            return true;
+            return false;
+        }
+
+        /// Returns any error encountered during iteration.
+        fn err(ctx: *anyopaque) ?anyerror {
+            const self: *SQLiteRows = @ptrCast(@alignCast(ctx));
+            return self.last_step_err;
         }
 
         /// Resets statement cursor, frees cached column names, and releases row memory.
@@ -478,6 +519,68 @@ test "stdgo.database.sql.sqlite: in-memory CRUD and transaction rollback/commit"
         const url_db = try sql_db.DB.open(testing.allocator, io, sq_driver.driver(), "sqlite://:memory:");
         defer url_db.close();
         try url_db.ping();
+    }
+
+    // Verify lastError on syntax error
+    {
+        const conn = try db.conn();
+        defer conn.release();
+
+        const exec_res = conn.exec("SELECT * FORM users", &.{});
+        try testing.expectError(error.SQLitePrepareFailed, exec_res);
+        const err_msg = conn.lastError();
+        try testing.expect(err_msg != null);
+        try testing.expect(std.mem.indexOf(u8, err_msg.?, "syntax error") != null);
+    }
+
+    // Verify rows.err() is null on clean completion
+    {
+        var rows = try db.query("SELECT id FROM users", &.{});
+        defer rows.close();
+        var dest: [1]Value = undefined;
+        while (rows.next(&dest)) {}
+        try testing.expect(rows.err() == null);
+    }
+
+    // Verify QueryRow single-row scan and ErrNoRows
+    {
+        {
+            var row = db.queryRow("SELECT balance FROM users WHERE name = ?", &.{Value{ .string = "Alice" }});
+            defer row.close();
+            var dest: [1]Value = undefined;
+            try row.scan(&dest);
+            try testing.expectEqual(@as(f64, 110.50), dest[0].float);
+        }
+
+        {
+            var empty_row = db.queryRow("SELECT balance FROM users WHERE name = ?", &.{Value{ .string = "Nonexistent" }});
+            defer empty_row.close();
+            var dest_empty: [1]Value = undefined;
+            try testing.expectError(error.ErrNoRows, empty_row.scan(&dest_empty));
+        }
+    }
+
+    // Verify beginTx with IsolationLevel and Tx.queryRow
+    {
+        var tx = try db.beginTx(context.background(), .{
+            .isolation = .serializable,
+            .read_only = false,
+        });
+        defer tx.rollback() catch {};
+
+        _ = try tx.exec("INSERT INTO users (name, age, balance) VALUES (?, ?, ?)", &.{
+            Value{ .string = "Dave" },
+            Value{ .int = 28 },
+            Value{ .float = 300.0 },
+        });
+
+        var tx_row = tx.queryRow("SELECT balance FROM users WHERE name = ?", &.{Value{ .string = "Dave" }});
+        defer tx_row.close();
+        var dave_dest: [1]Value = undefined;
+        try tx_row.scan(&dave_dest);
+        try testing.expectEqual(@as(f64, 300.0), dave_dest[0].float);
+
+        try tx.commit();
     }
 }
 

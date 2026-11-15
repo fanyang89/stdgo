@@ -15,17 +15,17 @@ pub fn main(init: std.process.Init) !void {
 
     // 2. Open SQLite Database Pool
     // Supported DSN formats:
-    // - ":memory:" (isolated in-memory database)
+    // - ":memory:" (isolated in-memory database per connection)
     // - "app.db" (local file database)
-    // - "file:mem?mode=memory&cache=shared" (shared in-memory URI across pool connections)
+    // - "file:products_db?mode=memory&cache=shared" (shared in-memory URI across all pool connections)
     // - "sqlite://:memory:" or "sqlite3://app.db" (scheme prefixes are automatically stripped)
-    const db = try sql.DB.open(allocator, init.io, sqlite_drv.driver(), ":memory:");
+    const db = try sql.DB.open(allocator, init.io, sqlite_drv.driver(), "file:products_db?mode=memory&cache=shared");
     defer db.close();
 
     db.setMaxOpenConns(5);
     db.setMaxIdleConns(2);
 
-    std.debug.print("1. SQLite Database opened (DSN: ':memory:')\n", .{});
+    std.debug.print("1. SQLite Database opened (DSN: '{s}')\n", .{db.dsn});
 
     // 3. Ping
     try db.ping();
@@ -99,22 +99,75 @@ pub fn main(init: std.process.Init) !void {
             if (record[3].int == 1) "YES" else "NO",
         });
     }
+    // Verify rows.err() is clean after iteration
+    if (rows.err()) |e| {
+        std.debug.print("   -> rows iteration error: {any}\n", .{e});
+    }
     std.debug.print("\n", .{});
 
-    // 7. Transaction with Commit
-    // db.begin() reserves a dedicated connection from the pool.
-    // All queries must be executed on the Tx handle (tx.exec/tx.query).
-    // tx.commit() or tx.rollback() completes the transaction and returns the connection.
+    // 7. Single-row Queries (db.queryRow & ErrNoRows)
+    std.debug.print("6. Single-row Queries (db.queryRow & ErrNoRows):\n", .{});
     {
-        var tx = try db.begin();
-        _ = try tx.exec("UPDATE products SET price = price * 0.9 WHERE id = 1", &.{});
-        try tx.commit();
-        std.debug.print("6. Discount transaction committed successfully!\n\n", .{});
+        var row = db.queryRow("SELECT name, price FROM products WHERE id = ?", &.{sql.Value{ .int = 1 }});
+        defer row.close();
+        var dest: [2]sql.Value = undefined;
+        try row.scan(&dest);
+        std.debug.print("   -> Product #1 single lookup: '{s}' | ${d:.2}\n", .{
+            dest[0].string,
+            dest[1].float,
+        });
+
+        // Querying non-existent item triggers error.ErrNoRows
+        var non_existent = db.queryRow("SELECT name, price FROM products WHERE id = 9999", &.{});
+        defer non_existent.close();
+        var dummy: [2]sql.Value = undefined;
+        non_existent.scan(&dummy) catch |err| switch (err) {
+            error.ErrNoRows => std.debug.print("   -> Querying ID 9999 returned error.ErrNoRows as expected!\n\n", .{}),
+            else => return err,
+        };
     }
 
-    // 8. Pool Stats
+    // 8. Advanced Transaction with Isolation Level (db.beginTx & TxOptions)
+    // Supports TxOptions with isolation levels (e.g. .serializable) and read-only flags
+    std.debug.print("7. Transactions with Isolation Level (db.beginTx & Tx.queryRow):\n", .{});
+    {
+        var tx = try db.beginTx(stdgo.context.background(), .{
+            .isolation = .serializable,
+            .read_only = false,
+        });
+        defer tx.rollback() catch {};
+
+        _ = try tx.exec("UPDATE products SET price = price * 0.9 WHERE id = 1", &.{});
+
+        // Use tx.queryRow inside transaction to verify new price
+        var tx_row = tx.queryRow("SELECT price FROM products WHERE id = 1", &.{});
+        defer tx_row.close();
+        var price_dest: [1]sql.Value = undefined;
+        try tx_row.scan(&price_dest);
+        std.debug.print("   -> In-transaction updated price: ${d:.2}\n", .{price_dest[0].float});
+
+        try tx.commit();
+        std.debug.print("   -> Serializable transaction committed successfully!\n\n", .{});
+    }
+
+    // 9. Native Diagnostic Error Message (conn.lastError)
+    std.debug.print("8. Native Detailed Error Reporting (conn.lastError):\n", .{});
+    {
+        const pc = try db.conn();
+        defer pc.release();
+
+        // Intentionally execute malformed SQL: "FORM" instead of "FROM"
+        _ = pc.exec("SELECT * FORM products", &.{}) catch |err| {
+            std.debug.print("   -> Exec failed with Zig error: {any}\n", .{err});
+            if (pc.lastError()) |native_msg| {
+                std.debug.print("   -> SQLite Native Detail: \"{s}\"\n\n", .{native_msg});
+            }
+        };
+    }
+
+    // 10. Pool Stats
     const st = db.stats();
-    std.debug.print("7. Pool Stats:\n", .{});
+    std.debug.print("9. Pool Stats:\n", .{});
     std.debug.print("   -> Open Conns: {d}, Idle: {d}, In-Use: {d}\n", .{
         st.open_connections,
         st.idle,
