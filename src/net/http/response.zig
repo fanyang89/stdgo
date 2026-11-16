@@ -46,6 +46,10 @@ pub const ResponseBodyReader = struct {
     leftover: []const u8,
     leftover_pos: usize = 0,
     gzip_state: ?*GzipState = null,
+    /// Preallocated reader interface storage, populated when `reader()` is called.
+    /// Do not access this field directly before calling `reader()`.
+    interface: std.Io.Reader = undefined,
+    read_err: ?anyerror = null,
 
     pub fn init(
         io: std.Io,
@@ -64,21 +68,48 @@ pub const ResponseBodyReader = struct {
             .leftover = leftover,
             .leftover_pos = 0,
             .gzip_state = null,
+            .interface = undefined,
+            .read_err = null,
         };
     }
 
-    pub fn reader(self: *ResponseBodyReader) io_mod.Reader {
-        return .{
-            .ptr = self,
-            .vtable = &.{
-                .read = struct {
-                    fn r(ctx: *anyopaque, b: []u8) anyerror!usize {
-                        const s: *ResponseBodyReader = @ptrCast(@alignCast(ctx));
-                        return s.read(b);
-                    }
-                }.r,
-            },
+    /// Returns a `std.Io.Reader` over the body that buffers into `buffer`.
+    /// Calling it again discards any bytes buffered by the previous reader.
+    /// When a read fails with `error.ReadFailed`, the cause is stored in `read_err`.
+    pub fn reader(self: *ResponseBodyReader, buffer: []u8) *io_mod.Reader {
+        self.interface = .{
+            .vtable = &reader_vtable,
+            .buffer = buffer,
+            .seek = 0,
+            .end = 0,
         };
+        return &self.interface;
+    }
+
+    const reader_vtable: std.Io.Reader.VTable = .{ .stream = stream };
+
+    fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const self: *ResponseBodyReader = @fieldParentPtr("interface", r);
+        // Writers with an empty buffer (e.g. hash writers) only accept bytes
+        // through `drain`, so read into scratch space and forward them.
+        if (w.buffer.len == 0) {
+            var tmp: [4096]u8 = undefined;
+            const n = self.read(limit.slice(&tmp)) catch |err| {
+                self.read_err = err;
+                return error.ReadFailed;
+            };
+            if (n == 0) return error.EndOfStream;
+            try w.writeAll(tmp[0..n]);
+            return n;
+        }
+        const dest = limit.slice(try w.writableSliceGreedy(1));
+        const n = self.read(dest) catch |err| {
+            self.read_err = err;
+            return error.ReadFailed;
+        };
+        if (n == 0) return error.EndOfStream;
+        w.advance(n);
+        return n;
     }
 
     pub fn enableGzip(self: *ResponseBodyReader, allocator: std.mem.Allocator) !void {
@@ -258,8 +289,10 @@ pub const Response = struct {
     raw_head: []const u8,
     uncompressed: bool = false,
 
-    pub fn reader(self: *Response) io_mod.Reader {
-        return self.body.reader();
+    /// Returns a `std.Io.Reader` over the body that buffers into `buffer`.
+    /// See `ResponseBodyReader.reader`.
+    pub fn reader(self: *Response, buffer: []u8) *io_mod.Reader {
+        return self.body.reader(buffer);
     }
 
     pub fn close(self: *Response) void {
@@ -350,3 +383,38 @@ pub const Response = struct {
         return null;
     }
 };
+
+test "ResponseBodyReader.reader reads fixed and chunked bodies" {
+    const testing = std.testing;
+    var buf: [4]u8 = undefined;
+    var out: [64]u8 = undefined;
+
+    // The whole body is in `leftover`, so the connection is never read.
+    var fixed = ResponseBodyReader.init(undefined, undefined, .fixed, 11, "hello worldEXTRA");
+    const fixed_len = try fixed.reader(&buf).readSliceShort(&out);
+    try testing.expectEqualStrings("hello world", out[0..fixed_len]);
+
+    var chunked = ResponseBodyReader.init(undefined, undefined, .chunked, 0, "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n");
+    const r = chunked.reader(&buf);
+    try testing.expectEqualStrings("hel", try r.take(3));
+    const chunked_len = try r.readSliceShort(&out);
+    try testing.expectEqualStrings("lo world", out[0..chunked_len]);
+    try testing.expectError(error.EndOfStream, r.takeByte());
+}
+
+test "ResponseBodyReader.reader streams into writers with an empty buffer" {
+    const testing = std.testing;
+    const Digest = @import("../../crypto/sha256.zig").Digest;
+    var buf: [4]u8 = undefined;
+
+    var body = ResponseBodyReader.init(undefined, undefined, .chunked, 0, "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n");
+    var digest = Digest.init();
+    const n = try body.reader(&buf).streamRemaining(digest.writer());
+    try testing.expectEqual(@as(usize, 11), n);
+
+    var got: [32]u8 = undefined;
+    digest.sum(&got);
+    var want: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash("hello world", &want, .{});
+    try testing.expectEqualSlices(u8, &want, &got);
+}
