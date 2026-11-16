@@ -341,7 +341,11 @@ pub const DB = struct {
                 pc.last_used_at_ns = now;
                 pc.from_pool = true;
                 self.active_conns.append(self.allocator, pc) catch |append_err| {
-                    self.free_conns.append(self.allocator, pc) catch {};
+                    self.free_conns.append(self.allocator, pc) catch {
+                        pc.raw.close();
+                        self.allocator.destroy(pc);
+                        self.num_open -= 1;
+                    };
                     return append_err;
                 };
                 _ = self.ref_count.fetchAdd(1, .acquire);

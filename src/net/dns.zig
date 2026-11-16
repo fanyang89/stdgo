@@ -193,8 +193,16 @@ pub const Resolver = struct {
         var list: std.ArrayListUnmanaged(IP) = .empty;
         errdefer list.deinit(allocator);
 
+        var last_err: ?anyerror = null;
+
         // First query IPv4 (A)
-        const a_records = self.queryRaw(allocator, io, host, .A) catch null;
+        const a_records = self.queryRaw(allocator, io, host, .A) catch |err| switch (err) {
+            error.DnsNameError => null,
+            else => |e| blk: {
+                last_err = e;
+                break :blk null;
+            },
+        };
         if (a_records) |records| {
             defer {
                 for (records) |r| allocator.free(r.data);
@@ -208,7 +216,13 @@ pub const Resolver = struct {
         }
 
         // Then query IPv6 (AAAA)
-        const aaaa_records = self.queryRaw(allocator, io, host, .AAAA) catch null;
+        const aaaa_records = self.queryRaw(allocator, io, host, .AAAA) catch |err| switch (err) {
+            error.DnsNameError => null,
+            else => |e| blk: {
+                last_err = e;
+                break :blk null;
+            },
+        };
         if (aaaa_records) |records| {
             defer {
                 for (records) |r| allocator.free(r.data);
@@ -221,8 +235,9 @@ pub const Resolver = struct {
             }
         }
 
-        if (list.items.len == 0) return error.NoRecordsFound;
-        return list.toOwnedSlice(allocator);
+        if (list.items.len > 0) return list.toOwnedSlice(allocator);
+        if (last_err) |err| return err;
+        return error.NoRecordsFound;
     }
 
     /// Look up CNAME record.
@@ -450,4 +465,19 @@ pub fn lookupTXT(allocator: Allocator, io: std.Io, host: []const u8) ![][]const 
 pub fn lookupMX(allocator: Allocator, io: std.Io, host: []const u8) ![]MX {
     const r = Resolver{};
     return r.lookupMX(allocator, io, host);
+}
+
+test "net.dns: lookupIP propagates network errors instead of swallowing into NoRecordsFound" {
+    const testing = std.testing;
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const r = Resolver{
+        .nameserver = "invalid_addr_format",
+    };
+
+    const res = r.lookupIP(testing.allocator, io, "example.com");
+    // Must propagate the underlying parsing/network error, NEVER swallow into NoRecordsFound!
+    try testing.expect(res != error.NoRecordsFound);
 }
