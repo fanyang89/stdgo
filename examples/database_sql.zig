@@ -149,12 +149,13 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("9. Concurrent Workers Pool Contention (4 threads competing for pool):\n", .{});
     const Worker = struct {
         fn workerThread(db_handle: *sql.DB) void {
+            const bg_ctx = stdgo.context.background();
             for (0..10) |_| {
                 const pc = db_handle.conn() catch return;
                 defer pc.release();
-                var stmt = pc.raw.prepare("SELECT 1") catch continue;
+                var stmt = pc.raw.prepare(bg_ctx, "SELECT 1") catch continue;
                 defer stmt.close();
-                _ = stmt.exec(&.{}) catch {};
+                _ = stmt.exec(bg_ctx, &.{}) catch {};
             }
         }
     };

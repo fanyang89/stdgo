@@ -25,7 +25,7 @@ pub fn main(init: std.process.Init) !void {
     var gz_buf = bytes.Buffer.init(gpa);
     defer gz_buf.deinit();
 
-    var gzip_w = try gzip.Writer.init(gz_buf.writer(), .{
+    var gzip_w = try gzip.Writer.init(gpa, gz_buf.writer(), .{
         .name = "gopher_doc.txt",
         .mod_time = 1700000000,
         .os = 255,
@@ -34,7 +34,7 @@ pub fn main(init: std.process.Init) !void {
     try gzip_w.close();
 
     var gz_reader_src = bytes.Reader.init(gz_buf.bytes());
-    var gzip_r = try gzip.Reader.init(gz_reader_src.reader());
+    var gzip_r = try gzip.Reader.init(gpa, gz_reader_src.reader());
     std.debug.print("   Header Name: '{s}', ModTime: {d}\n", .{ gzip_r.header.name, gzip_r.header.mod_time });
 
     const gz_decompressed = try gzip_r.readAllAlloc(gpa);

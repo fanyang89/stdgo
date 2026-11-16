@@ -749,8 +749,8 @@ test "Client: max_redirects exceeded returns error.TooManyRedirects without doub
 
                 var w_buf: [256]u8 = undefined;
                 var sw = conn.writer(s_io, &w_buf);
-                // Return 302 redirecting back to itself
-                const resp = "HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\n\r\n";
+                // Return 302 redirecting back to itself with Connection: close to avoid keep-alive race
+                const resp = "HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                 try sw.interface.writeAll(resp);
                 try sw.interface.flush();
             }
