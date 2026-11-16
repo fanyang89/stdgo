@@ -34,6 +34,10 @@ pub const Context = struct {
     pub fn value(self: Context, key: []const u8) ?*const anyopaque {
         return self.vtable.value(self.ptr, key);
     }
+
+    pub fn isNoop(self: Context) bool {
+        return self.vtable == &empty_vtable;
+    }
 };
 
 // --- Empty Root Context (Background / TODO) ---

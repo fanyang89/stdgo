@@ -256,8 +256,10 @@ pub const Transport = struct {
             socks_pass_to_free = details.socks_pass;
         }
 
-        const pooled = if (!use_proxy) self.pool.acquire(target.host, target.port, target.is_tls) else null;
-        var conn: *HttpConn = if (pooled) |c|
+        var allow_pool = true;
+        while (true) {
+            const pooled = if (!use_proxy and allow_pool) self.pool.acquire(target.host, target.port, target.is_tls) else null;
+            var conn: *HttpConn = if (pooled) |c|
             c
         else blk: {
             const timeout = makeIoTimeout(self.options.timeout_ns);
@@ -418,10 +420,28 @@ pub const Transport = struct {
         }
         try req_buf.appendSlice(self.allocator, "\r\n");
 
-        try conn.writeAll(self.io, req_buf.items, self.options.timeout_ns);
+        const write_res = conn.writeAll(self.io, req_buf.items, self.options.timeout_ns);
+        if (write_res) |_| {} else |err| {
+            if (pooled != null and req.body_reader == null) {
+                conn.close(self.io);
+                self.allocator.destroy(conn);
+                allow_pool = false;
+                continue;
+            }
+            return err;
+        }
 
         if (req.body) |b| {
-            try conn.writeAll(self.io, b, self.options.timeout_ns);
+            const body_res = conn.writeAll(self.io, b, self.options.timeout_ns);
+            if (body_res) |_| {} else |err| {
+                if (pooled != null and req.body_reader == null) {
+                    conn.close(self.io);
+                    self.allocator.destroy(conn);
+                    allow_pool = false;
+                    continue;
+                }
+                return err;
+            }
         } else if (req.body_reader) |r| {
             var buf: [4096]u8 = undefined;
             if (req.content_length != null) {
@@ -452,6 +472,7 @@ pub const Transport = struct {
         const in = conn.reader();
         var head_len: usize = 0;
         const max_head_len = 16 * 1024;
+        var header_retry = false;
 
         while (true) {
             const buffered = in.buffered();
@@ -461,9 +482,22 @@ pub const Transport = struct {
             }
             if (buffered.len >= max_head_len) return error.ResponseHeaderTooLarge;
             in.fillMore() catch |err| switch (err) {
-                error.EndOfStream => return error.ConnectionClosedPrematurely,
+                error.EndOfStream => {
+                    if (pooled != null and req.body_reader == null and buffered.len == 0) {
+                        header_retry = true;
+                        break;
+                    }
+                    return error.ConnectionClosedPrematurely;
+                },
                 else => |e| return e,
             };
+        }
+
+        if (header_retry) {
+            conn.close(self.io);
+            self.allocator.destroy(conn);
+            allow_pool = false;
+            continue;
         }
 
         const raw_head = try self.allocator.dupe(u8, in.buffered()[0..head_len]);
@@ -528,6 +562,7 @@ pub const Transport = struct {
             }
         }
 
-        return resp;
+            return resp;
+        }
     }
 };

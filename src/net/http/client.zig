@@ -97,8 +97,14 @@ pub const Client = struct {
         var current_body_reader = req.body_reader;
         var redirects_followed: u8 = 0;
 
-        var via = std.ArrayListUnmanaged(*const Request).empty;
-        defer via.deinit(self.allocator);
+        var via = std.ArrayListUnmanaged(*Request).empty;
+        defer {
+            for (via.items) |v_req| {
+                v_req.deinit();
+                self.allocator.destroy(v_req);
+            }
+            via.deinit(self.allocator);
+        }
 
         while (true) {
             if (req.ctx) |c| {
@@ -110,8 +116,13 @@ pub const Client = struct {
 
             const target = try parseUrlTarget(current_url);
 
-            var round_trip_req = Request.init(self.allocator, current_method, current_url);
-            defer round_trip_req.deinit();
+            const round_trip_req = try self.allocator.create(Request);
+            round_trip_req.* = Request.init(self.allocator, current_method, current_url);
+            var owned_by_via = false;
+            errdefer if (!owned_by_via) {
+                round_trip_req.deinit();
+                self.allocator.destroy(round_trip_req);
+            };
 
             // Copy original headers (stripping body headers if converted to GET)
             for (req.header.entries.items) |entry| {
@@ -147,9 +158,9 @@ pub const Client = struct {
             }
 
             var resp = if (self.custom_round_tripper) |rt|
-                try rt.roundTrip(&round_trip_req)
+                try rt.roundTrip(round_trip_req)
             else
-                try self.transport.roundTrip(&round_trip_req);
+                try self.transport.roundTrip(round_trip_req);
 
             // Collect Set-Cookie into jar
             if (self.options.jar) |jar| {
@@ -166,10 +177,12 @@ pub const Client = struct {
             };
 
             if (is_redirect and self.options.max_redirects > 0) {
-                try via.append(self.allocator, &round_trip_req);
+                try via.append(self.allocator, round_trip_req);
+                owned_by_via = true;
 
                 if (self.options.check_redirect) |check_fn| {
-                    try check_fn(self.options.check_redirect_ctx, req, via.items);
+                    const const_via: []const *const Request = @ptrCast(via.items);
+                    try check_fn(self.options.check_redirect_ctx, req, const_via);
                 } else if (redirects_followed >= self.options.max_redirects) {
                     resp.close();
                     return error.TooManyRedirects;
@@ -188,11 +201,13 @@ pub const Client = struct {
                     const scheme_end = std.mem.indexOf(u8, current_url, "://");
                     const host_start = if (scheme_end) |pos| pos + 3 else 0;
                     const slash_idx = std.mem.indexOfScalar(u8, current_url[host_start..], '/');
-                    const base = if (slash_idx) |idx| current_url[0 .. host_start + idx] else current_url;
+                    const host_root = if (slash_idx) |idx| current_url[0 .. host_start + idx] else current_url;
                     if (std.mem.startsWith(u8, location, "/")) {
-                        new_url = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ base, location });
+                        new_url = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ host_root, location });
                     } else {
-                        new_url = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ base, location });
+                        const last_slash = std.mem.lastIndexOfScalar(u8, current_url, '/');
+                        const dir_base = if (last_slash) |ls| current_url[0 .. ls + 1] else host_root;
+                        new_url = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ dir_base, location });
                     }
                 }
 
@@ -234,6 +249,8 @@ pub const Client = struct {
                 continue;
             }
 
+            round_trip_req.deinit();
+            self.allocator.destroy(round_trip_req);
             return resp;
         }
     }
@@ -704,6 +721,60 @@ test "Client: CheckRedirect and cross-origin header stripping" {
     try testing.expectEqual(@as(usize, 1), state.redirect_calls);
     // Crucial security check: cross-origin (127.0.0.1 -> localhost) must strip Authorization!
     try testing.expect(!auth_present_on_s2);
+}
+
+test "Client: max_redirects exceeded returns error.TooManyRedirects without double-free" {
+    const testing = std.testing;
+
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const loopback = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var server = try loopback.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    const port = server.socket.address.ip4.port;
+
+    const ServerHandler = struct {
+        fn run(s: *std.Io.net.Server, s_io: std.Io) !void {
+            for (0..2) |_| {
+                var conn = try s.accept(s_io);
+                defer conn.close(s_io);
+
+                var read_buf: [512]u8 = undefined;
+                var sr = conn.reader(s_io, &read_buf);
+                while (std.mem.indexOf(u8, sr.interface.buffered(), "\r\n\r\n") == null) {
+                    try sr.interface.fillMore();
+                }
+
+                var w_buf: [256]u8 = undefined;
+                var sw = conn.writer(s_io, &w_buf);
+                // Return 302 redirecting back to itself
+                const resp = "HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\n\r\n";
+                try sw.interface.writeAll(resp);
+                try sw.interface.flush();
+            }
+        }
+    };
+
+    const s_thread = try std.Thread.spawn(.{}, ServerHandler.run, .{ &server, io });
+
+    var c = Client.init(testing.allocator, io, .{
+        .proxy_from_env = false,
+        .max_redirects = 1,
+    });
+    defer c.deinit();
+
+    const start_url = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/start", .{port});
+    defer testing.allocator.free(start_url);
+
+    var req = try newRequest(testing.allocator, .GET, start_url, null);
+    defer req.deinit();
+
+    const res = c.do(&req);
+    try testing.expectError(error.TooManyRedirects, res);
+
+    s_thread.join();
 }
 
 test "Client: Streaming request body with Reader and Chunked Transfer-Encoding" {

@@ -297,6 +297,9 @@ pub const File = struct {
         };
 
         // Parse section headers
+        const total_sh_size = std.math.mul(usize, shnum, shentsize) catch return FormatError.UnexpectedEOF;
+        if (shoff > data.len or data.len - shoff < total_sh_size) return FormatError.UnexpectedEOF;
+
         const sections = try allocator.alloc(Section, shnum);
         errdefer allocator.free(sections);
 
@@ -319,7 +322,7 @@ pub const File = struct {
                 const addralign = mem.readInt(u32, sh[32..36], endian);
                 const entsize = mem.readInt(u32, sh[36..40], endian);
 
-                const sec_data = if (shtype != .nobits and offset + size <= data.len)
+                const sec_data = if (shtype != .nobits and offset <= data.len and size <= data.len - offset)
                     data[offset .. offset + size]
                 else
                     &.{};
@@ -355,7 +358,7 @@ pub const File = struct {
                 const addralign = mem.readInt(u64, sh[48..56], endian);
                 const entsize = mem.readInt(u64, sh[56..64], endian);
 
-                const sec_data = if (shtype != .nobits and offset + size <= data.len)
+                const sec_data = if (shtype != .nobits and offset <= data.len and size <= data.len - offset)
                     data[offset .. offset + size]
                 else
                     &.{};
@@ -393,6 +396,9 @@ pub const File = struct {
         f.sections = sections;
 
         // Parse program headers
+        const total_ph_size = std.math.mul(usize, phnum, phentsize) catch return FormatError.UnexpectedEOF;
+        if (phoff > data.len or data.len - phoff < total_ph_size) return FormatError.UnexpectedEOF;
+
         const progs = try allocator.alloc(Prog, phnum);
         errdefer allocator.free(progs);
 
@@ -410,7 +416,7 @@ pub const File = struct {
                 const flags = mem.readInt(u32, ph[24..28], endian);
                 const palign = mem.readInt(u32, ph[28..32], endian);
 
-                const prog_data = if (poffset + filesz <= data.len) data[poffset .. poffset + filesz] else &.{};
+                const prog_data = if (poffset <= data.len and filesz <= data.len - poffset) data[poffset .. poffset + filesz] else &.{};
                 progs[i] = .{
                     .header = .{
                         .type = ptype,
@@ -437,7 +443,7 @@ pub const File = struct {
                 const memsz = mem.readInt(u64, ph[40..48], endian);
                 const palign = mem.readInt(u64, ph[48..56], endian);
 
-                const prog_data = if (poffset + filesz <= data.len) data[poffset .. poffset + filesz] else &.{};
+                const prog_data = if (poffset <= data.len and filesz <= data.len - poffset) data[poffset .. poffset + filesz] else &.{};
                 progs[i] = .{
                     .header = .{
                         .type = ptype,

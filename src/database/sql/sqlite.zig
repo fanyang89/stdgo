@@ -100,7 +100,8 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
         db: *c.sqlite3,
 
         /// Prepares a SQL query statement for execution.
-        fn prepare(ctx: *anyopaque, query: []const u8) anyerror!driver_pkg.Stmt {
+        fn prepare(ctx: *anyopaque, c_ctx: context.Context, query: []const u8) anyerror!driver_pkg.Stmt {
+            if (c_ctx.err()) |e| return e;
             const self: *SQLiteConn = @ptrCast(@alignCast(ctx));
 
             var stmt: ?*c.sqlite3_stmt = null;
@@ -135,12 +136,13 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
         }
 
         /// Starts a new SQLite transaction ("BEGIN TRANSACTION").
-        fn begin(ctx: *anyopaque) anyerror!driver_pkg.Tx {
-            return beginTx(ctx, .{});
+        fn begin(ctx: *anyopaque, c_ctx: context.Context) anyerror!driver_pkg.Tx {
+            return beginTx(ctx, c_ctx, .{});
         }
 
         /// Starts a new SQLite transaction observing TxOptions.
-        fn beginTx(ctx: *anyopaque, opts: driver_pkg.TxOptions) anyerror!driver_pkg.Tx {
+        fn beginTx(ctx: *anyopaque, c_ctx: context.Context, opts: driver_pkg.TxOptions) anyerror!driver_pkg.Tx {
+            if (c_ctx.err()) |e| return e;
             const self: *SQLiteConn = @ptrCast(@alignCast(ctx));
             const sql: [*c]const u8 = switch (opts.isolation) {
                 .serializable => if (opts.read_only) "BEGIN DEFERRED" else "BEGIN IMMEDIATE",
@@ -168,7 +170,8 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
         }
 
         /// Verifies connection health by stepping a dummy "SELECT 1" statement.
-        fn ping(ctx: *anyopaque) anyerror!void {
+        fn ping(ctx: *anyopaque, c_ctx: context.Context) anyerror!void {
+            if (c_ctx.err()) |e| return e;
             const self: *SQLiteConn = @ptrCast(@alignCast(ctx));
             var stmt: ?*c.sqlite3_stmt = null;
             if (c.sqlite3_prepare_v2(self.db, "SELECT 1", -1, &stmt, null) != c.SQLITE_OK) {
@@ -249,7 +252,8 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
         }
 
         /// Executes a prepared query that does not return rows (e.g., INSERT, UPDATE, DELETE).
-        fn exec(ctx: *anyopaque, args: []const Value) anyerror!Result {
+        fn exec(ctx: *anyopaque, c_ctx: context.Context, args: []const Value) anyerror!Result {
+            if (c_ctx.err()) |e| return e;
             const self: *SQLiteStmt = @ptrCast(@alignCast(ctx));
             try bindArgs(self.stmt, args);
 
@@ -268,7 +272,8 @@ pub const SQLiteDriver = if (!build_options.have_sqlite) struct {
         }
 
         /// Executes a query that returns rows (e.g., SELECT).
-        fn query(ctx: *anyopaque, args: []const Value) anyerror!driver_pkg.Rows {
+        fn query(ctx: *anyopaque, c_ctx: context.Context, args: []const Value) anyerror!driver_pkg.Rows {
+            if (c_ctx.err()) |e| return e;
             const self: *SQLiteStmt = @ptrCast(@alignCast(ctx));
             try bindArgs(self.stmt, args);
 

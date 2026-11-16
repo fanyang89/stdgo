@@ -174,14 +174,14 @@ pub const FormImplicitConst: u32 = 0x21;
 /// ReadUleb128 decodes an unsigned LEB128 integer from data at pos.
 pub fn readUleb128(data: []const u8, pos: *usize) error{ UnexpectedEof, Overflow }!u64 {
     var result: u64 = 0;
-    var shift: u6 = 0;
+    var shift: usize = 0;
     while (true) {
         if (pos.* >= data.len) return error.UnexpectedEof;
         const b = data[pos.*];
         pos.* += 1;
         const slice: u64 = b & 0x7f;
         if (shift >= 64 or (shift == 63 and slice > 1)) return error.Overflow;
-        result |= slice << shift;
+        result |= slice << @as(u6, @intCast(shift));
         if ((b & 0x80) == 0) break;
         shift += 7;
     }
@@ -191,19 +191,20 @@ pub fn readUleb128(data: []const u8, pos: *usize) error{ UnexpectedEof, Overflow
 /// ReadSleb128 decodes a signed LEB128 integer from data at pos.
 pub fn readSleb128(data: []const u8, pos: *usize) error{ UnexpectedEof, Overflow }!i64 {
     var result: i64 = 0;
-    var shift: u6 = 0;
+    var shift: usize = 0;
     var b: u8 = 0;
     while (true) {
         if (pos.* >= data.len) return error.UnexpectedEof;
         b = data[pos.*];
         pos.* += 1;
         const slice: i64 = @intCast(b & 0x7f);
-        result |= slice << shift;
+        if (shift >= 64 or (shift == 63 and slice > 1)) return error.Overflow;
+        result |= slice << @as(u6, @intCast(shift));
         shift += 7;
         if ((b & 0x80) == 0) break;
     }
     if (shift < 64 and (b & 0x40) != 0) {
-        result |= -(@as(i64, 1) << shift);
+        result |= -(@as(i64, 1) << @as(u6, @intCast(shift)));
     }
     return result;
 }
@@ -269,8 +270,8 @@ pub const Entry = struct {
         if (self.attr(a)) |val| {
             return switch (val) {
                 .sint => |s| s,
-                .uint => |u| @intCast(u),
-                .addr => |addr| @intCast(addr),
+                .uint => |u| @as(i64, @bitCast(u)),
+                .addr => |addr| @as(i64, @bitCast(addr)),
                 else => null,
             };
         }

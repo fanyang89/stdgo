@@ -115,9 +115,11 @@ pub fn decode(allocator: Allocator, bytes: []const u8) !*RGBAImage {
     }
     const decompressed = decomp_buf.items;
 
-    const stride = @as(usize, hdr.width) * bpp;
-    const scanline_len = 1 + stride;
-    if (decompressed.len < @as(usize, hdr.height) * scanline_len) {
+    if (hdr.width > 10000 or hdr.height > 10000) return error.InvalidDimensions;
+    const stride = std.math.mul(usize, @as(usize, hdr.width), bpp) catch return error.InvalidDimensions;
+    const scanline_len = stride + 1;
+    const total_scanline_bytes = std.math.mul(usize, @as(usize, hdr.height), scanline_len) catch return error.InvalidDimensions;
+    if (decompressed.len < total_scanline_bytes) {
         return error.UnexpectedEof;
     }
 

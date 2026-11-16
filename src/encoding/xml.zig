@@ -133,6 +133,8 @@ pub fn unescapeText(allocator: Allocator, s: []const u8) ![]u8 {
     return out.toOwnedSlice(allocator);
 }
 
+pub const max_xml_depth: usize = 1000;
+
 pub const Decoder = struct {
     r: *std.Io.Reader,
     allocator: Allocator,
@@ -194,8 +196,12 @@ pub const Decoder = struct {
                     const trimmed = mem.trim(u8, tag_text, " \t\r\n");
                     const name = parseName(trimmed);
 
-                    if (self.open_tags.items.len > 0) {
-                        _ = self.open_tags.pop();
+                    if (self.open_tags.items.len == 0) {
+                        return SyntaxError.MismatchedClosingTag;
+                    }
+                    const top = self.open_tags.pop().?;
+                    if (!mem.eql(u8, top.local, name.local) or !mem.eql(u8, top.space, name.space)) {
+                        return SyntaxError.MismatchedClosingTag;
                     }
 
                     return Token{
@@ -297,6 +303,9 @@ pub const Decoder = struct {
                     if (self_closing) {
                         self.pending_end = EndElement{ .name = name };
                     } else {
+                        if (self.open_tags.items.len >= max_xml_depth) {
+                            return SyntaxError.InvalidToken;
+                        }
                         try self.open_tags.append(self.allocator, name);
                     }
 

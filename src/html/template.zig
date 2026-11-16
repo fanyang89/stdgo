@@ -99,11 +99,13 @@ pub const Escaper = struct {
     attr_len: usize = 0,
     is_url_attr: bool = false,
     is_js_attr: bool = false,
+    has_space_after_attr: bool = false,
 
     fn resetAttr(self: *Escaper) void {
         self.attr_len = 0;
         self.is_url_attr = false;
         self.is_js_attr = false;
+        self.has_space_after_attr = false;
     }
 
     fn checkAttr(self: *Escaper) void {
@@ -168,6 +170,7 @@ pub const Escaper = struct {
                         self.tag_len = 0;
                         self.resetAttr();
                     } else if (c == '=') {
+                        self.has_space_after_attr = false;
                         self.checkAttr();
                         var j = i + 1;
                         while (j < text.len and std.ascii.isWhitespace(text[j])) : (j += 1) {}
@@ -195,10 +198,17 @@ pub const Escaper = struct {
                                     .attr_value_unquoted;
                                 i = j - 1;
                             }
+                        } else {
+                            self.state = if (self.is_url_attr)
+                                .url_attr_unquoted
+                            else
+                                .attr_value_unquoted;
                         }
                     } else if (std.ascii.isWhitespace(c)) {
                         if (self.in_tag_name) {
                             self.in_tag_name = false;
+                        } else if (self.attr_len > 0) {
+                            self.has_space_after_attr = true;
                         }
                     } else if (c == '/') {
                         self.in_tag_name = false;
@@ -209,6 +219,9 @@ pub const Escaper = struct {
                                 self.tag_len += 1;
                             }
                         } else {
+                            if (self.has_space_after_attr) {
+                                self.resetAttr();
+                            }
                             if (self.attr_len < self.attr_name.len and c != '<' and c != '"' and c != '\'') {
                                 self.attr_name[self.attr_len] = c;
                                 self.attr_len += 1;
@@ -313,6 +326,44 @@ pub const Filters = struct {
                 '"' => try out.appendSlice(allocator, "&#34;"),
                 '\'' => try out.appendSlice(allocator, "&#39;"),
                 '`' => try out.appendSlice(allocator, "&#96;"),
+                else => try out.append(allocator, c),
+            }
+        }
+        return Value{ .string = try out.toOwnedSlice(allocator) };
+    }
+
+    pub fn unquotedAttrEscaper(allocator: Allocator, args: []const Value) anyerror!Value {
+        if (args.len == 0) return Value{ .string = "" };
+        const arg = args[0];
+        if (arg == .safe_string and (arg.safe_string.kind == .attr or arg.safe_string.kind == .html)) {
+            return Value{ .string = arg.safe_string.data };
+        }
+        const s = try valueToString(allocator, arg);
+        var needed = false;
+        for (s) |c| {
+            if (c == '&' or c == '<' or c == '>' or c == '"' or c == '\'' or c == '`' or
+                c == ' ' or c == '\t' or c == '\r' or c == '\n' or c == '=')
+            {
+                needed = true;
+                break;
+            }
+        }
+        if (!needed) return Value{ .string = s };
+
+        var out = std.ArrayList(u8).empty;
+        for (s) |c| {
+            switch (c) {
+                '&' => try out.appendSlice(allocator, "&amp;"),
+                '<' => try out.appendSlice(allocator, "&lt;"),
+                '>' => try out.appendSlice(allocator, "&gt;"),
+                '"' => try out.appendSlice(allocator, "&#34;"),
+                '\'' => try out.appendSlice(allocator, "&#39;"),
+                '`' => try out.appendSlice(allocator, "&#96;"),
+                ' ' => try out.appendSlice(allocator, "&#32;"),
+                '\t' => try out.appendSlice(allocator, "&#9;"),
+                '\n' => try out.appendSlice(allocator, "&#10;"),
+                '\r' => try out.appendSlice(allocator, "&#13;"),
+                '=' => try out.appendSlice(allocator, "&#61;"),
                 else => try out.append(allocator, c),
             }
         }
@@ -471,7 +522,8 @@ pub fn escapeNodes(allocator: Allocator, nodes: []const Node, escaper: *Escaper)
                 // Determine appropriate escaping filter based on current context state
                 const filter_name: []const u8 = switch (escaper.state) {
                     .text => "_html_esc",
-                    .attr_value_unquoted, .attr_value_single_quoted, .attr_value_double_quoted, .tag => "_attr_esc",
+                    .attr_value_unquoted => "_unquoted_attr_esc",
+                    .attr_value_single_quoted, .attr_value_double_quoted, .tag => "_attr_esc",
                     .url_attr_unquoted, .url_attr_single_quoted, .url_attr_double_quoted => "_url_esc",
                     .script_data, .js_attr_single_quoted, .js_attr_double_quoted => "_js_esc",
                     .style_data => "_css_esc",
@@ -553,6 +605,7 @@ pub const Template = struct {
         // Register internal escape filters
         inner.funcs.put("_html_esc", Filters.htmlEscaper) catch unreachable;
         inner.funcs.put("_attr_esc", Filters.attrEscaper) catch unreachable;
+        inner.funcs.put("_unquoted_attr_esc", Filters.unquotedAttrEscaper) catch unreachable;
         inner.funcs.put("_url_esc", Filters.urlEscaper) catch unreachable;
         inner.funcs.put("_js_esc", Filters.jsEscaper) catch unreachable;
         inner.funcs.put("_css_esc", Filters.cssEscaper) catch unreachable;
@@ -640,6 +693,10 @@ test "html.template: basic HTML entity escaping" {
     try testing.expectEqualStrings(expected, buf.string());
 }
 
+
+
+
+
 test "html.template: attribute context escaping" {
     const testing = std.testing;
     const bytes = @import("../bytes.zig");
@@ -660,6 +717,10 @@ test "html.template: attribute context escaping" {
     const expected = "<input type=\"text\" value=\"foo&#34; onfocus=&#34;alert(1)\" title='bar&#39; onmouseover=&#39;alert(2)'>";
     try testing.expectEqualStrings(expected, buf.string());
 }
+
+
+
+
 
 test "html.template: URL context protocol sanitization" {
     const testing = std.testing;
@@ -682,6 +743,10 @@ test "html.template: URL context protocol sanitization" {
     try testing.expectEqualStrings(expected, buf.string());
 }
 
+
+
+
+
 test "html.template: script context JavaScript string escaping" {
     const testing = std.testing;
     const bytes = @import("../bytes.zig");
@@ -701,6 +766,10 @@ test "html.template: script context JavaScript string escaping" {
     const expected = "<script>var msg = \"Hello \\x3c/script\\x3e<script\\x3ealert(\\'pwn\\')\\x3c/script\\x3e\";</script>";
     try testing.expectEqualStrings(expected, buf.string());
 }
+
+
+
+
 
 test "html.template: safe types bypass escaping" {
     const testing = std.testing;
@@ -723,6 +792,10 @@ test "html.template: safe types bypass escaping" {
     const expected = "<div><b>Bold & Beautiful</b></div><script>var x = { count: 42, active: true };</script><a href=\"javascript:void(0)\">Link</a>";
     try testing.expectEqualStrings(expected, buf.string());
 }
+
+
+
+
 
 test "html.template: sub-templates and composition with escaping" {
     const testing = std.testing;
@@ -763,3 +836,28 @@ test "html.template: sub-templates and composition with escaping" {
 
     try testing.expectEqualStrings(expected, buf.string());
 }
+
+test "html.template: unquoted attribute escaping and multi-attribute parsing" {
+    const testing = std.testing;
+    const bytes = @import("../bytes.zig");
+
+    var tmpl = Template.new(testing.allocator, "unquoted_test");
+    defer tmpl.deinit();
+
+    _ = try tmpl.parse("<div id={{ .ID }} disabled class=\"{{ .Class }}\"></div>");
+
+    var buf = bytes.Buffer.init(testing.allocator);
+    defer buf.deinit();
+
+    try tmpl.execute(buf.writer(), .{
+        .ID = "a b=c",
+        .Class = "container",
+    });
+
+    const expected = "<div id=a&#32;b&#61;c disabled class=\"container\"></div>";
+    try testing.expectEqualStrings(expected, buf.string());
+}
+
+
+
+

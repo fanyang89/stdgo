@@ -59,38 +59,58 @@ pub const Cmd = struct {
         var watchdog_done = std.atomic.Value(bool).init(false);
         var watchdog_thread: ?std.Thread = null;
         if (self.ctx) |ctx_val| {
-            const Watchdog = struct {
-                fn runWatchdog(done_ptr: *std.atomic.Value(bool), s_ptr: *State, c_io: Io, c_ctx: context.Context) void {
-                    const watchdog_poll_interval_ns: u64 = 5 * std.time.ns_per_ms;
-                    while (!done_ptr.load(.acquire)) {
-                        if (c_ctx.err() != null) {
-                            s_ptr.mutex.lock();
-                            defer s_ptr.mutex.unlock();
-                            if (!s_ptr.exited) {
-                                // Note: We do NOT call `s_ptr.child.kill(c_io)` here because `child.kill`
-                                // synchronously calls `wait4` to reap the process. Doing so from this watchdog
-                                // thread while the main thread is concurrently blocked in `child.wait(io)` would
-                                // cause both threads to invoke `wait4` on the same PID, triggering an ECHILD race
-                                // and panicking with "programmer bug caused syscall error: CHILD (Double-free)".
-                                // Instead, send an asynchronous termination signal (SIGTERM on POSIX) without
-                                // reaping, letting the main thread's `child.wait(io)` safely reap and collect status.
-                                if (builtin.os.tag != .windows) {
-                                    if (s_ptr.child.id) |pid| {
-                                        _ = std.posix.kill(pid, .TERM) catch {};
-                                    }
-                                } else {
-                                    if (s_ptr.child.id) |handle| {
-                                        _ = std.os.windows.ntdll.NtTerminateProcess(handle, @fromBackingInt(@as(u32, 1)));
+            if (!ctx_val.isNoop()) {
+                const Watchdog = struct {
+                    fn runWatchdog(done_ptr: *std.atomic.Value(bool), s_ptr: *State, c_io: Io, c_ctx: context.Context) void {
+                        const watchdog_poll_interval_ns: u64 = 1 * std.time.ns_per_ms;
+                        while (!done_ptr.load(.acquire)) {
+                            if (c_ctx.err() != null) {
+                                s_ptr.mutex.lock();
+                                defer s_ptr.mutex.unlock();
+                                if (!s_ptr.exited) {
+                                    // Note: We do NOT call `s_ptr.child.kill(c_io)` here because `child.kill`
+                                    // synchronously calls `wait4` to reap the process. Doing so from this watchdog
+                                    // thread while the main thread is concurrently blocked in `child.wait(io)` would
+                                    // cause both threads to invoke `wait4` on the same PID, triggering an ECHILD race
+                                    // and panicking with "programmer bug caused syscall error: CHILD (Double-free)".
+                                    // Instead, send an asynchronous termination signal (SIGTERM on POSIX) without
+                                    // reaping, letting the main thread's `child.wait(io)` safely reap and collect status.
+                                    if (builtin.os.tag != .windows) {
+                                        if (s_ptr.child.id) |pid| {
+                                            _ = std.posix.kill(pid, .TERM) catch {};
+                                        }
+                                    } else {
+                                        if (s_ptr.child.id) |handle| {
+                                            _ = std.os.windows.ntdll.NtTerminateProcess(handle, @fromBackingInt(@as(u32, 1)));
+                                        }
                                     }
                                 }
+                                break;
                             }
-                            break;
+                            c_io.sleep(std.Io.Duration.fromNanoseconds(watchdog_poll_interval_ns), .awake) catch {};
                         }
-                        c_io.sleep(std.Io.Duration.fromNanoseconds(watchdog_poll_interval_ns), .awake) catch {};
                     }
-                }
-            };
-            watchdog_thread = try std.Thread.spawn(.{}, Watchdog.runWatchdog, .{ &watchdog_done, &state, io, ctx_val });
+                };
+                watchdog_thread = try std.Thread.spawn(.{}, Watchdog.runWatchdog, .{ &watchdog_done, &state, io, ctx_val });
+            }
+        }
+
+        defer {
+            watchdog_done.store(true, .release);
+            if (watchdog_thread) |wt| {
+                wt.join();
+                watchdog_thread = null;
+            }
+        }
+
+        errdefer {
+            state.mutex.lock();
+            const already_exited = state.exited;
+            state.exited = true;
+            state.mutex.unlock();
+            if (!already_exited) {
+                state.child.kill(io);
+            }
         }
 
         // Pipe stdin if provided
@@ -143,11 +163,6 @@ pub const Cmd = struct {
             state.mutex.unlock();
             break :blk t;
         };
-
-        watchdog_done.store(true, .release);
-        if (watchdog_thread) |wt| {
-            wt.join();
-        }
 
         if (self.ctx) |c| {
             if (c.err()) |e| return e;

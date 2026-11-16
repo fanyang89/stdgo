@@ -38,9 +38,6 @@ pub const HttpConn = struct {
         ca_bundle: ?*std.crypto.Certificate.Bundle,
         insecure_skip_verify: bool,
     ) !*HttpConn {
-        _ = ca_bundle;
-        _ = insecure_skip_verify;
-
         const min_buf = std.crypto.tls.Client.min_buffer_len;
         const total_mem = min_buf * 4;
         const mem = try allocator.alloc(u8, total_mem);
@@ -68,9 +65,22 @@ pub const HttpConn = struct {
 
         const now = std.Io.Timestamp.now(io, .real);
 
+        var ca_lock: std.Io.RwLock = .init;
         const ca_opt: std.crypto.tls.Client.Options = .{
-            .host = .{ .explicit = host },
-            .ca = .no_verification,
+            .host = if (insecure_skip_verify) .no_verification else .{ .explicit = host },
+            .ca = if (insecure_skip_verify)
+                .no_verification
+            else if (ca_bundle) |bundle|
+                .{
+                    .bundle = .{
+                        .gpa = allocator,
+                        .io = io,
+                        .lock = &ca_lock,
+                        .bundle = bundle,
+                    },
+                }
+            else
+                .no_verification,
             .write_buffer = tls_write_buf,
             .read_buffer = tls_read_buf,
             .entropy = &random_buf,

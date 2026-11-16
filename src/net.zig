@@ -177,8 +177,23 @@ test "net.listenUDP and dialUDP loopback test" {
     const from_res = try server_uc.readFrom(&recv_buf);
     try testing.expectEqualStrings("PING_UDP", recv_buf[0..from_res.n]);
 
+    // 1. Send packet from an unrelated/unconnected UDP socket to client_uc
+    const unrelated_uc = try listenUDP(testing.allocator, io, "udp", "127.0.0.1:0");
+    defer unrelated_uc.close();
+
+    var client_addr_buf: [32]u8 = undefined;
+    const client_addr_str = try std.fmt.bufPrint(&client_addr_buf, "127.0.0.1:{d}", .{client_uc.port()});
+    const client_udp_addr = UDPAddr{
+        .ip = .{ .v4 = .{ 127, 0, 0, 1 } },
+        .port = client_uc.port(),
+    };
+    _ = client_addr_str;
+    _ = try unrelated_uc.writeTo("SPOOFED_PACKET", client_udp_addr);
+
+    // 2. Server sends legitimate reply
     _ = try server_uc.writeTo("PONG_UDP", from_res.addr);
 
+    // 3. Client read() must filter out the packet from unrelated_uc and return only PONG_UDP
     var client_recv: [64]u8 = undefined;
     const cn = try client_uc.read(&client_recv);
     try testing.expectEqualStrings("PONG_UDP", client_recv[0..cn]);

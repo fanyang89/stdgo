@@ -149,17 +149,25 @@ pub const Reader = struct {
                 if (self.last_code == 0xFFFF) return error.CorruptLzwData;
                 c = self.last_code;
                 var tmp_c = c;
+                var loop_count: usize = 0;
                 while (self.prefix[tmp_c] != 0xFFFF) {
                     tmp_c = self.prefix[tmp_c];
+                    loop_count += 1;
+                    if (loop_count > max_table_size) return error.CorruptLzwData;
                 }
+                if (self.stack_pos >= max_table_size) return error.CorruptLzwData;
                 self.stack[self.stack_pos] = self.suffix[tmp_c];
                 self.stack_pos += 1;
             }
 
+            var loop_count: usize = 0;
             while (c != 0xFFFF) {
+                if (self.stack_pos >= max_table_size) return error.CorruptLzwData;
                 self.stack[self.stack_pos] = self.suffix[c];
                 self.stack_pos += 1;
                 c = self.prefix[c];
+                loop_count += 1;
+                if (loop_count > max_table_size) return error.CorruptLzwData;
             }
 
             // Add new dictionary entry

@@ -89,6 +89,7 @@ pub const File = struct {
     pub fn seek(self: *File, offset: i64, whence: io_mod.SeekWhence) !u64 {
         if (self.writer_init) {
             try self.writer_inst.interface.flush();
+            self.writer_init = false;
         }
         const r_stream = self.reader();
         _ = r_stream;
@@ -128,6 +129,7 @@ pub const File = struct {
     pub fn sync(self: *File) !void {
         if (self.writer_init) {
             try self.writer_inst.interface.flush();
+            self.writer_init = false;
         }
         try self.handle.sync(self.io);
     }
@@ -139,6 +141,7 @@ pub const File = struct {
         defer self.handle.close(self.io);
         if (self.writer_init) {
             try self.writer_inst.interface.flush();
+            self.writer_init = false;
         }
     }
 };

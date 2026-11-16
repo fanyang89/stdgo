@@ -99,7 +99,7 @@ pub const UvarintResult = struct {
 /// Uvarint decodes a uint64 from buf and returns that value and the number of bytes read.
 pub fn uvarint(buf: []const u8) Error!UvarintResult {
     var x: u64 = 0;
-    var s: u6 = 0;
+    var s: usize = 0;
     for (buf, 0..) |b, i| {
         if (i == max_varint_len_64) {
             return Error.Overflow;
@@ -108,10 +108,10 @@ pub fn uvarint(buf: []const u8) Error!UvarintResult {
             if (i == max_varint_len_64 - 1 and b > 1) {
                 return Error.Overflow;
             }
-            x |= @as(u64, b) << s;
+            x |= @as(u64, b) << @as(u6, @intCast(s));
             return .{ .val = x, .bytes_read = i + 1 };
         }
-        x |= @as(u64, b & 0x7f) << s;
+        x |= @as(u64, b & 0x7f) << @as(u6, @intCast(s));
         s += 7;
     }
     return Error.BufferTooSmall;

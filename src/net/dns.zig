@@ -321,7 +321,9 @@ pub const Resolver = struct {
         defer uc.close();
 
         var query_buf: [512]u8 = undefined;
-        const query_id: u16 = 0x4242;
+        var rand_bytes: [2]u8 = undefined;
+        io.random(&rand_bytes);
+        const query_id: u16 = std.mem.readInt(u16, &rand_bytes, .big);
         const q_len = try buildQuery(query_id, host, qtype, &query_buf);
 
         const sent = try uc.write(query_buf[0..q_len]);
@@ -332,7 +334,11 @@ pub const Resolver = struct {
         if (rn < 12) return error.DnsPacketTooShort;
 
         const packet = resp_buf[0..rn];
+        const resp_id = std.mem.readInt(u16, packet[0..2], .big);
+        if (resp_id != query_id) return error.DnsTransactionMismatch;
+
         const flags = std.mem.readInt(u16, packet[2..4], .big);
+        if ((flags & 0x8000) == 0) return error.DnsNotResponse;
         const rcode = flags & 0x0F;
 
         if (rcode == 1) return error.DnsFormatError;

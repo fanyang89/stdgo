@@ -99,6 +99,7 @@ pub fn decodeAll(allocator: Allocator, data: []const u8) !GIF {
     pos += 2;
     const screen_h = mem.readInt(u16, data[pos..][0..2], .little);
     pos += 2;
+    if (screen_w > 10000 or screen_h > 10000) return error.InvalidDimensions;
     const lsd_packed = data[pos];
     pos += 1;
     _ = data[pos]; // bg_index
@@ -221,7 +222,7 @@ pub fn decodeAll(allocator: Allocator, data: []const u8) !GIF {
             const id_packed = data[pos];
             pos += 1;
 
-            if (img_w == 0 or img_h == 0) return error.InvalidDimensions;
+            if (img_w == 0 or img_h == 0 or img_w > 10000 or img_h > 10000) return error.InvalidDimensions;
 
             const has_lct = (id_packed & 0x80) != 0;
             const interlaced = (id_packed & 0x40) != 0;
@@ -262,7 +263,7 @@ pub fn decodeAll(allocator: Allocator, data: []const u8) !GIF {
             if (pos < data.len and data[pos] == 0) pos += 1;
 
             // Decompress LZW stream
-            const total_pixels = @as(usize, img_w) * @as(usize, img_h);
+            const total_pixels = std.math.mul(usize, @as(usize, img_w), @as(usize, img_h)) catch return error.InvalidDimensions;
             const decoded_indices = try allocator.alloc(u8, total_pixels);
             defer allocator.free(decoded_indices);
 

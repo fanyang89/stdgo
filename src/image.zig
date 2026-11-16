@@ -126,8 +126,10 @@ pub const RGBAImage = struct {
     pub fn init(alloc: Allocator, r: Rectangle) !*RGBAImage {
         const w = @max(0, r.dx());
         const h = @max(0, r.dy());
-        const stride: usize = @as(usize, @intCast(w)) * 4;
-        const total_bytes = stride * @as(usize, @intCast(h));
+        const w_u: usize = @intCast(w);
+        const h_u: usize = @intCast(h);
+        const stride = std.math.mul(usize, w_u, 4) catch return error.OutOfMemory;
+        const total_bytes = std.math.mul(usize, stride, h_u) catch return error.OutOfMemory;
 
         const pix = try alloc.alloc(u8, total_bytes);
         @memset(pix, 0);

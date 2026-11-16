@@ -3,6 +3,7 @@ const std = @import("std");
 const Cookie = @import("cookie.zig").Cookie;
 const CookieIterator = @import("cookie.zig").CookieIterator;
 const parseSetCookie = @import("cookie.zig").parseSetCookie;
+const Mutex = @import("../../sync/mutex.zig").Mutex;
 
 pub const CookieJarEntry = struct {
     host: []const u8,
@@ -14,15 +15,19 @@ pub const CookieJarEntry = struct {
 pub const CookieJar = struct {
     allocator: std.mem.Allocator,
     entries: std.ArrayListUnmanaged(CookieJarEntry),
+    mutex: Mutex = .{},
 
     pub fn init(allocator: std.mem.Allocator) CookieJar {
         return .{
             .allocator = allocator,
             .entries = .empty,
+            .mutex = .{},
         };
     }
 
     pub fn deinit(self: *CookieJar) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         for (self.entries.items) |e| {
             self.allocator.free(e.host);
             self.allocator.free(e.name);
@@ -39,6 +44,8 @@ pub const CookieJar = struct {
     }
 
     pub fn setCookie(self: *CookieJar, host: []const u8, c: Cookie) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         for (self.entries.items) |*existing| {
             if (std.ascii.eqlIgnoreCase(existing.host, host) and std.mem.eql(u8, existing.name, c.name)) {
                 self.allocator.free(existing.value);
@@ -64,7 +71,9 @@ pub const CookieJar = struct {
         });
     }
 
-    pub fn formatCookieHeader(self: *const CookieJar, allocator: std.mem.Allocator, host: []const u8) !?[]u8 {
+    pub fn formatCookieHeader(self: *CookieJar, allocator: std.mem.Allocator, host: []const u8) !?[]u8 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         var list = std.ArrayListUnmanaged(u8).empty;
         errdefer list.deinit(allocator);
 

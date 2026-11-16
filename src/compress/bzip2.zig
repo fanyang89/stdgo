@@ -20,6 +20,7 @@ pub const StructuralError = error{
     InsufficientSelectors,
     NoTreeSelectors,
     UnexpectedEOF,
+    HuffmanLengthOutOfRange,
 };
 
 pub const BitReader = struct {
@@ -453,7 +454,7 @@ pub const Reader = struct {
         defer self.allocator.free(lengths);
 
         for (0..num_trees) |t_idx| {
-            var length = try self.br.readBits(u5, 5);
+            var length: i32 = @intCast(try self.br.readBits(u5, 5));
             for (0..alpha_size) |j| {
                 while (try self.br.readBit()) {
                     if (try self.br.readBit()) {
@@ -461,6 +462,9 @@ pub const Reader = struct {
                     } else {
                         length += 1;
                     }
+                }
+                if (length < 1 or length > 20) {
+                    return StructuralError.HuffmanLengthOutOfRange;
                 }
                 lengths[j] = @intCast(length);
             }

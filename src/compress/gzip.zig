@@ -2,6 +2,7 @@ const std = @import("std");
 const io = @import("../io.zig");
 const encoding = @import("../encoding.zig");
 const binary = encoding.binary;
+const flate = @import("flate.zig");
 const Allocator = std.mem.Allocator;
 
 pub const gzip_id1: u8 = 0x1f;
@@ -19,7 +20,7 @@ pub const Error = error{
     ChecksumMismatch,
     SizeMismatch,
     UnexpectedEof,
-};
+} || flate.Error || Allocator.Error || std.Io.Writer.Error;
 
 pub const Header = struct {
     name: []const u8 = "",
@@ -28,12 +29,18 @@ pub const Header = struct {
 };
 
 pub const Writer = struct {
-    w: *io.Writer,
-    crc: u32 = 0,
+    allocator: Allocator,
+    underlying: *io.Writer,
+    flate_writer: *flate.Writer,
+    hasher: std.hash.Crc32 = std.hash.Crc32.init(),
     uncompressed_size: u32 = 0,
     closed: bool = false,
 
-    pub fn init(w: *io.Writer, header: Header) anyerror!Writer {
+    pub fn init(allocator: Allocator, w: *io.Writer, header: Header) anyerror!Writer {
+        return initWithLevel(allocator, w, header, flate.DefaultCompression);
+    }
+
+    pub fn initWithLevel(allocator: Allocator, w: *io.Writer, header: Header, level: i32) anyerror!Writer {
         // Write 10-byte fixed header
         var hdr: [10]u8 = undefined;
         hdr[0] = gzip_id1;
@@ -55,9 +62,13 @@ pub const Writer = struct {
             try w.writeByte(0); // null terminator
         }
 
+        const fw = try flate.newWriter(allocator, w, level);
+
         return .{
-            .w = w,
-            .crc = 0,
+            .allocator = allocator,
+            .underlying = w,
+            .flate_writer = fw,
+            .hasher = std.hash.Crc32.init(),
             .uncompressed_size = 0,
             .closed = false,
         };
@@ -65,38 +76,50 @@ pub const Writer = struct {
 
     pub fn write(self: *Writer, data: []const u8) anyerror!usize {
         if (data.len == 0) return 0;
-        self.crc = std.hash.Crc32.hash(data); // for multi-chunk can update
-        self.uncompressed_size += @intCast(data.len);
-        try self.w.writeAll(data);
+        self.hasher.update(data);
+        self.uncompressed_size +%= @intCast(data.len);
+        try self.flate_writer.writer().writeAll(data);
         return data.len;
+    }
+
+    pub fn flush(self: *Writer) anyerror!void {
+        try self.flate_writer.flush();
     }
 
     pub fn close(self: *Writer) anyerror!void {
         if (self.closed) return;
 
+        try self.flate_writer.close();
+
         // Write 8-byte trailer: CRC-32 (4) + ISIZE (4)
         var trailer: [8]u8 = undefined;
-        try binary.LittleEndian.writeU32(trailer[0..4], self.crc);
+        try binary.LittleEndian.writeU32(trailer[0..4], self.hasher.final());
         try binary.LittleEndian.writeU32(trailer[4..8], self.uncompressed_size);
-        try self.w.writeAll(&trailer);
-        try self.w.flush();
+        try self.underlying.writeAll(&trailer);
+        try self.underlying.flush();
 
         self.closed = true;
+    }
+
+    pub fn deinit(self: *Writer) void {
+        self.flate_writer.deinit();
     }
 };
 
 pub const Reader = struct {
+    allocator: Allocator,
     r: *io.Reader,
     header: Header,
-    crc: u32 = 0,
+    window_buf: []u8,
+    decompress: std.compress.flate.Decompress,
+    hasher: std.hash.Crc32 = std.hash.Crc32.init(),
     uncompressed_size: u32 = 0,
-    read_so_far: u32 = 0,
-    name_buf: [128]u8 = undefined,
+    eof: bool = false,
 
-    pub fn init(r: *io.Reader) anyerror!Reader {
+    pub fn init(allocator: Allocator, r: *io.Reader) anyerror!Reader {
         var hdr: [10]u8 = undefined;
         const n_hdr = try io.readFull(r, &hdr);
-        std.debug.assert(n_hdr == hdr.len);
+        if (n_hdr < hdr.len) return Error.UnexpectedEof;
 
         if (hdr[0] != gzip_id1 or hdr[1] != gzip_id2 or hdr[2] != gzip_deflate) {
             return Error.InvalidHeader;
@@ -106,73 +129,114 @@ pub const Reader = struct {
         const mtime = try binary.LittleEndian.readU32(hdr[4..8]);
         const os = hdr[9];
 
-        var self = Reader{
+        // Skip extra field if present
+        if ((flg & flag_extra) != 0) {
+            var xlen_buf: [2]u8 = undefined;
+            if (try io.readFull(r, &xlen_buf) < 2) return Error.UnexpectedEof;
+            const xlen = try binary.LittleEndian.readU16(&xlen_buf);
+            var skipped: usize = 0;
+            var dummy: [64]u8 = undefined;
+            while (skipped < xlen) {
+                const to_read = @min(dummy.len, xlen - skipped);
+                const n = try io.readFull(r, dummy[0..to_read]);
+                if (n < to_read) return Error.UnexpectedEof;
+                skipped += n;
+            }
+        }
+
+        // If filename present, read until null
+        var name_str: []const u8 = "";
+        if ((flg & flag_name) != 0) {
+            var name_list = std.ArrayList(u8).empty;
+            errdefer name_list.deinit(allocator);
+            while (true) {
+                var b: [1]u8 = undefined;
+                if (try io.readFull(r, &b) < 1) return Error.UnexpectedEof;
+                if (b[0] == 0) break;
+                try name_list.append(allocator, b[0]);
+            }
+            name_str = try name_list.toOwnedSlice(allocator);
+        }
+        errdefer if (name_str.len > 0) allocator.free(name_str);
+
+        // Skip comment if present
+        if ((flg & flag_comment) != 0) {
+            while (true) {
+                var b: [1]u8 = undefined;
+                if (try io.readFull(r, &b) < 1) return Error.UnexpectedEof;
+                if (b[0] == 0) break;
+            }
+        }
+
+        // Skip header CRC16 if present
+        if ((flg & flag_hcrc) != 0) {
+            var hcrc: [2]u8 = undefined;
+            if (try io.readFull(r, &hcrc) < 2) return Error.UnexpectedEof;
+        }
+
+        const window_buf = try allocator.alloc(u8, std.compress.flate.max_window_len);
+        errdefer allocator.free(window_buf);
+
+        return Reader{
+            .allocator = allocator,
             .r = r,
             .header = .{
-                .name = "",
+                .name = name_str,
                 .mod_time = mtime,
                 .os = os,
             },
-            .crc = 0,
+            .window_buf = window_buf,
+            .decompress = std.compress.flate.Decompress.init(r, .raw, window_buf),
+            .hasher = std.hash.Crc32.init(),
             .uncompressed_size = 0,
-            .read_so_far = 0,
+            .eof = false,
         };
+    }
 
-        // If filename present, read until null
-        if ((flg & flag_name) != 0) {
-            var n: usize = 0;
-            while (n < self.name_buf.len) : (n += 1) {
-                var b: [1]u8 = undefined;
-                const n_b = try io.readFull(r, &b);
-                std.debug.assert(n_b == b.len);
-                if (b[0] == 0) break;
-                self.name_buf[n] = b[0];
-            }
-            self.header.name = self.name_buf[0..n];
+    pub fn read(self: *Reader, buf: []u8) anyerror!usize {
+        if (self.eof or buf.len == 0) return 0;
+        const n = try self.decompress.reader.readSliceShort(buf);
+        if (n > 0) {
+            self.hasher.update(buf[0..n]);
+            self.uncompressed_size +%= @intCast(n);
+            return n;
         }
 
-        return self;
+        // Raw deflate stream ended, now parse and verify 8-byte trailer
+        self.eof = true;
+        var trailer: [8]u8 = undefined;
+        const n_tr = try io.readFull(self.r, &trailer);
+        if (n_tr < trailer.len) return Error.UnexpectedEof;
+
+        const expected_crc = try binary.LittleEndian.readU32(trailer[0..4]);
+        const expected_size = try binary.LittleEndian.readU32(trailer[4..8]);
+
+        if (self.hasher.final() != expected_crc) return Error.ChecksumMismatch;
+        if (self.uncompressed_size != expected_size) return Error.SizeMismatch;
+
+        return 0;
     }
 
     /// Read reads decompressed content and verifies CRC32 and trailer upon EOF.
-    pub fn readAllAlloc(self: *Reader, allocator: Allocator) anyerror![]u8 {
+    pub fn readAllAlloc(self: *Reader, alloc: Allocator) anyerror![]u8 {
         var list = std.ArrayList(u8).empty;
-        errdefer list.deinit(allocator);
+        errdefer list.deinit(alloc);
 
-        var buf: [512]u8 = undefined;
+        var buf: [4096]u8 = undefined;
         while (true) {
-            const nr = self.r.readSliceShort(&buf) catch |err| {
-                if (err == error.EndOfStream or err == io.Error.EndOfStream) break;
-                return err;
-            };
+            const nr = try self.read(&buf);
             if (nr == 0) break;
-            try list.appendSlice(allocator, buf[0..nr]);
+            try list.appendSlice(alloc, buf[0..nr]);
         }
 
-        // The remaining 8 bytes at the end of stream are CRC32 and ISIZE trailer
-        if (list.items.len < 8) {
-            return Error.UnexpectedEof;
+        return try list.toOwnedSlice(alloc);
+    }
+
+    pub fn deinit(self: *Reader) void {
+        if (self.header.name.len > 0) {
+            self.allocator.free(self.header.name);
         }
-
-        const data_len = list.items.len - 8;
-        const data = list.items[0..data_len];
-        const trailer = list.items[data_len..];
-
-        const expected_crc = try binary.LittleEndian.readU32(trailer[0..4]);
-        const expected_isize = try binary.LittleEndian.readU32(trailer[4..8]);
-
-        const actual_crc = std.hash.Crc32.hash(data);
-        if (actual_crc != expected_crc) {
-            return Error.ChecksumMismatch;
-        }
-
-        if (@as(u32, @intCast(data.len)) != expected_isize) {
-            return Error.SizeMismatch;
-        }
-
-        const result = try allocator.dupe(u8, data);
-        list.deinit(allocator);
-        return result;
+        self.allocator.free(self.window_buf);
     }
 };
 
@@ -183,19 +247,28 @@ test "compress.gzip write and readroundtrip" {
     var gz_buf = bytes.Buffer.init(testing.allocator);
     defer gz_buf.deinit();
 
-    const original_text = "Standard Go gzip implementation in Zig 0.17";
+    const original_text = "Standard Go gzip implementation in Zig 0.17! With real DEFLATE stream compression.";
 
     // 1. Write gzip
-    var gw = try Writer.init(gz_buf.writer(), .{
+    var gw = try Writer.init(testing.allocator, gz_buf.writer(), .{
         .name = "example.txt",
         .mod_time = 1234567,
     });
+    defer gw.deinit();
     _ = try gw.write(original_text);
     try gw.close();
 
+    // Verify it actually compressed and generated valid gzip header
+    try testing.expect(gz_buf.len() > 18);
+    try testing.expectEqual(@as(u8, gzip_id1), gz_buf.bytes()[0]);
+    try testing.expectEqual(@as(u8, gzip_id2), gz_buf.bytes()[1]);
+    try testing.expectEqual(@as(u8, gzip_deflate), gz_buf.bytes()[2]);
+
     // 2. Read gzip
     var br = bytes.Reader.init(gz_buf.bytes());
-    var gr = try Reader.init(br.reader());
+    var gr = try Reader.init(testing.allocator, br.reader());
+    defer gr.deinit();
+
     try testing.expectEqualStrings("example.txt", gr.header.name);
     try testing.expectEqual(@as(u32, 1234567), gr.header.mod_time);
 
@@ -203,4 +276,26 @@ test "compress.gzip write and readroundtrip" {
     defer testing.allocator.free(decompressed);
 
     try testing.expectEqualStrings(original_text, decompressed);
+}
+
+test "compress.gzip read external standard gzip payload" {
+    const testing = std.testing;
+    const bytes = @import("../bytes.zig");
+
+    // Standard RFC 1952 payload compressing "Hello world\n"
+    const external_gzip = [_]u8{
+        0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x03, // gzip header
+        0xf3, 0x48, 0xcd, 0xc9, 0xc9, 0x57, 0x28, 0xcf, // deflate block
+        0x2f, 0xca, 0x49, 0xe1, 0x02, 0x00,
+        0xd5, 0xe0, 0x39, 0xb7, 0x0c, 0x00, 0x00, 0x00, // crc32 + isize (12 bytes: "Hello world\n")
+    };
+
+    var br = bytes.Reader.init(&external_gzip);
+    var gr = try Reader.init(testing.allocator, br.reader());
+    defer gr.deinit();
+
+    const decompressed = try gr.readAllAlloc(testing.allocator);
+    defer testing.allocator.free(decompressed);
+
+    try testing.expectEqualStrings("Hello world\n", decompressed);
 }

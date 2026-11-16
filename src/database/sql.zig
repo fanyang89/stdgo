@@ -41,11 +41,15 @@ pub const Row = struct {
     /// Note: Any string/bytes in dest point into driver memory while the row is open;
     /// use `defer row.close()` to release the connection after using the scanned values.
     pub fn scan(self: *Row, dest: []Value) !void {
-        if (self.err_state) |e| return e;
+        if (self.err_state) |e| {
+            self.close();
+            return e;
+        }
         var r = &(self.rows orelse return error.ErrNoRows);
         if (!r.next(dest)) {
-            if (r.err()) |e| return e;
-            return error.ErrNoRows;
+            const e = r.err() orelse error.ErrNoRows;
+            self.close();
+            return e;
         }
     }
 
@@ -90,112 +94,43 @@ pub const PooledConn = struct {
 
     /// Exec executes a query on this specific connection.
     pub fn exec(self: *PooledConn, query_str: []const u8, args: []const Value) !Result {
-        var stmt = try self.raw.prepare(query_str);
-        defer stmt.close();
-        return try stmt.exec(args);
+        return self.execContext(context.background(), query_str, args);
     }
 
     /// Query executes a query on this specific connection.
     pub fn query(self: *PooledConn, query_str: []const u8, args: []const Value) !Rows {
-        var stmt = try self.raw.prepare(query_str);
-        errdefer stmt.close();
-        const raw_rows = try stmt.query(args);
-        return Rows{
-            .pooled_conn = null,
-            .stmt = stmt,
-            .raw_rows = raw_rows,
-        };
+        return self.queryContext(context.background(), query_str, args);
     }
 
     /// ExecContext executes a query on this connection observing ctx for cancellation.
     pub fn execContext(self: *PooledConn, ctx: context.Context, query_str: []const u8, args: []const Value) !Result {
         if (ctx.err()) |e| return e;
 
-        var done_flag = std.atomic.Value(bool).init(false);
-        const Watchdog = struct {
-            fn run(flag_ptr: *std.atomic.Value(bool), pc_ptr: *PooledConn, c_ctx: context.Context, c_io: std.Io) void {
-                while (!flag_ptr.load(.acquire)) {
-                    if (c_ctx.err() != null) {
-                        _ = pc_ptr.interrupt();
-                        break;
-                    }
-                    c_io.sleep(std.Io.Duration.fromNanoseconds(5 * std.time.ns_per_ms), .awake) catch {};
-                }
-            }
-        };
-
-        const watchdog_thread: ?std.Thread = if (ctx.done())
-            try std.Thread.spawn(.{}, Watchdog.run, .{ &done_flag, self, ctx, self.db.io })
-        else
-            null;
-        defer {
-            done_flag.store(true, .release);
-            if (watchdog_thread) |wt| wt.join();
-        }
-
-        var stmt = try self.raw.prepare(query_str);
+        var stmt = try self.raw.prepare(ctx, query_str);
         defer stmt.close();
 
-        const res = stmt.exec(args) catch |err| {
-            if (ctx.err()) |ce| return ce;
-            return err;
-        };
-        if (ctx.err()) |ce| return ce;
-        return res;
+        return stmt.exec(ctx, args);
     }
 
     /// QueryContext executes a query returning rows on this connection observing ctx for cancellation.
     pub fn queryContext(self: *PooledConn, ctx: context.Context, query_str: []const u8, args: []const Value) !Rows {
         if (ctx.err()) |e| return e;
 
-        var done_flag = std.atomic.Value(bool).init(false);
-        const Watchdog = struct {
-            fn run(flag_ptr: *std.atomic.Value(bool), pc_ptr: *PooledConn, c_ctx: context.Context, c_io: std.Io) void {
-                while (!flag_ptr.load(.acquire)) {
-                    if (c_ctx.err() != null) {
-                        _ = pc_ptr.interrupt();
-                        break;
-                    }
-                    c_io.sleep(std.Io.Duration.fromNanoseconds(5 * std.time.ns_per_ms), .awake) catch {};
-                }
-            }
-        };
-
-        const watchdog_thread: ?std.Thread = if (ctx.done())
-            try std.Thread.spawn(.{}, Watchdog.run, .{ &done_flag, self, ctx, self.db.io })
-        else
-            null;
-        defer {
-            done_flag.store(true, .release);
-            if (watchdog_thread) |wt| wt.join();
-        }
-
-        var stmt = try self.raw.prepare(query_str);
+        var stmt = try self.raw.prepare(ctx, query_str);
         errdefer stmt.close();
 
-        const raw_rows = stmt.query(args) catch |err| {
-            if (ctx.err()) |ce| return ce;
-            return err;
-        };
-        if (ctx.err()) |ce| {
-            var r = raw_rows;
-            r.close();
-            return ce;
-        }
-
+        const raw_rows = try stmt.query(ctx, args);
         return Rows{
             .pooled_conn = null,
             .stmt = stmt,
             .raw_rows = raw_rows,
+            .ctx = ctx,
         };
     }
 
     /// QueryRow executes a query that is expected to return at most one row.
     pub fn queryRow(self: *PooledConn, query_str: []const u8, args: []const Value) Row {
-        const r = self.query(query_str, args) catch |err| {
-            return Row{ .err_state = err };
-        };
-        return Row{ .rows = r };
+        return self.queryRowContext(context.background(), query_str, args);
     }
 
     /// QueryRowContext executes a query that is expected to return at most one row, observing ctx.
@@ -210,38 +145,7 @@ pub const PooledConn = struct {
     pub fn beginTx(self: *PooledConn, ctx: context.Context, opts: TxOptions) !Tx {
         if (ctx.err()) |e| return e;
 
-        var done_flag = std.atomic.Value(bool).init(false);
-        const Watchdog = struct {
-            fn run(flag_ptr: *std.atomic.Value(bool), pc_ptr: *PooledConn, c_ctx: context.Context, c_io: std.Io) void {
-                while (!flag_ptr.load(.acquire)) {
-                    if (c_ctx.err() != null) {
-                        _ = pc_ptr.interrupt();
-                        break;
-                    }
-                    c_io.sleep(std.Io.Duration.fromNanoseconds(5 * std.time.ns_per_ms), .awake) catch {};
-                }
-            }
-        };
-
-        const watchdog_thread: ?std.Thread = if (ctx.done())
-            try std.Thread.spawn(.{}, Watchdog.run, .{ &done_flag, self, ctx, self.db.io })
-        else
-            null;
-        defer {
-            done_flag.store(true, .release);
-            if (watchdog_thread) |wt| wt.join();
-        }
-
-        const raw_tx = self.raw.beginTx(opts) catch |err| {
-            if (ctx.err()) |ce| return ce;
-            return err;
-        };
-        if (ctx.err()) |ce| {
-            var t = raw_tx;
-            _ = t.rollback() catch {};
-            return ce;
-        }
-
+        const raw_tx = try self.raw.beginTx(ctx, opts);
         return Tx{
             .pooled_conn = self,
             .raw_tx = raw_tx,
@@ -267,6 +171,7 @@ pub const DB = struct {
     free_conns: std.ArrayList(*PooledConn),
     active_conns: std.ArrayList(*PooledConn),
     closed: bool = false,
+    ref_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(1),
 
     wait_count: u64 = 0,
     wait_duration_ns: u64 = 0,
@@ -285,8 +190,27 @@ pub const DB = struct {
             .dsn = dsn_copy,
             .free_conns = std.ArrayList(*PooledConn).empty,
             .active_conns = std.ArrayList(*PooledConn).empty,
+            .ref_count = std.atomic.Value(usize).init(1),
         };
         return db;
+    }
+
+    fn destroySelf(self: *DB) void {
+        for (self.free_conns.items) |pc| {
+            pc.raw.close();
+            self.allocator.destroy(pc);
+            self.num_open -%= 1;
+        }
+        self.active_conns.deinit(self.allocator);
+        self.free_conns.deinit(self.allocator);
+        self.allocator.free(self.dsn);
+        self.allocator.destroy(self);
+    }
+
+    fn decrementRef(self: *DB) void {
+        if (self.ref_count.fetchSub(1, .acq_rel) == 1) {
+            self.destroySelf();
+        }
     }
 
     fn currentNanoTimestamp(self: *DB) i128 {
@@ -304,21 +228,31 @@ pub const DB = struct {
         }
         self.closed = true;
 
+        for (self.active_conns.items) |pc| {
+            _ = pc.interrupt();
+        }
+
+        // Close and free all idle connections immediately
         for (self.free_conns.items) |pc| {
             pc.raw.close();
             self.allocator.destroy(pc);
             self.num_open -= 1;
         }
-        self.free_conns.deinit(self.allocator);
+        self.free_conns.clearRetainingCapacity();
 
-        for (self.active_conns.items) |pc| {
-            _ = pc.interrupt();
+        // Optional grace period waiting for active queries to exit gracefully
+        const max_wait_attempts: usize = 1000;
+        var attempts: usize = 0;
+        while (self.active_conns.items.len > 0 and attempts < max_wait_attempts) : (attempts += 1) {
+            self.mutex.unlock();
+            self.io.sleep(std.Io.Duration.fromNanoseconds(500 * std.time.ns_per_us), .awake) catch {
+                std.Thread.yield() catch {};
+            };
+            self.mutex.lock();
         }
-        self.active_conns.deinit(self.allocator);
         self.mutex.unlock();
 
-        self.allocator.free(self.dsn);
-        self.allocator.destroy(self);
+        self.decrementRef();
     }
 
     /// SetMaxOpenConns sets the maximum number of open connections to the database.
@@ -370,9 +304,14 @@ pub const DB = struct {
 
     /// Ping verifies a connection to the database is still alive, establishing a connection if necessary.
     pub fn ping(self: *DB) !void {
+        return self.pingContext(context.background());
+    }
+
+    /// PingContext verifies a connection to the database is still alive, observing ctx for cancellation.
+    pub fn pingContext(self: *DB, ctx: context.Context) !void {
         const pc = try self.conn();
         defer pc.release();
-        try pc.raw.ping();
+        try pc.raw.ping(ctx);
     }
 
     /// conn returns a single connection by either opening a new connection
@@ -405,6 +344,7 @@ pub const DB = struct {
                     self.free_conns.append(self.allocator, pc) catch {};
                     return append_err;
                 };
+                _ = self.ref_count.fetchAdd(1, .acquire);
                 return pc;
             }
 
@@ -440,13 +380,16 @@ pub const DB = struct {
                     self.num_open -= 1;
                     return append_err;
                 };
+                _ = self.ref_count.fetchAdd(1, .acquire);
                 return pc;
             }
 
-            // 3. Pool is exhausted; yield and retry
+            // 3. Pool is exhausted; sleep/yield and retry
             self.wait_count += 1;
             self.mutex.unlock();
-            std.Thread.yield() catch {};
+            self.io.sleep(std.Io.Duration.fromNanoseconds(500 * std.time.ns_per_us), .awake) catch {
+                std.Thread.yield() catch {};
+            };
             self.mutex.lock();
             const waited = self.currentNanoTimestamp() - start_wait;
             if (waited > 0) {
@@ -457,7 +400,6 @@ pub const DB = struct {
 
     pub fn putConn(self: *DB, pc: *PooledConn) void {
         self.mutex.lock();
-        defer self.mutex.unlock();
 
         for (self.active_conns.items, 0..) |item, i| {
             if (item == pc) {
@@ -470,6 +412,8 @@ pub const DB = struct {
             pc.raw.close();
             self.allocator.destroy(pc);
             self.num_open -= 1;
+            self.mutex.unlock();
+            self.decrementRef();
             return;
         }
 
@@ -480,6 +424,8 @@ pub const DB = struct {
                 self.allocator.destroy(pc);
                 self.num_open -= 1;
                 self.max_lifetime_closed += 1;
+                self.mutex.unlock();
+                self.decrementRef();
                 return;
             }
         }
@@ -489,6 +435,8 @@ pub const DB = struct {
             self.allocator.destroy(pc);
             self.num_open -= 1;
             self.max_idle_closed += 1;
+            self.mutex.unlock();
+            self.decrementRef();
             return;
         }
 
@@ -498,14 +446,17 @@ pub const DB = struct {
             pc.raw.close();
             self.allocator.destroy(pc);
             self.num_open -= 1;
+            self.mutex.unlock();
+            self.decrementRef();
             return;
         };
+        self.mutex.unlock();
+        self.decrementRef();
     }
 
     /// Discards a bad connection from the pool permanently.
     fn discardConn(self: *DB, pc: *PooledConn) void {
         self.mutex.lock();
-        defer self.mutex.unlock();
         for (self.active_conns.items, 0..) |item, i| {
             if (item == pc) {
                 _ = self.active_conns.swapRemove(i);
@@ -515,6 +466,9 @@ pub const DB = struct {
         pc.raw.close();
         self.allocator.destroy(pc);
         self.num_open -= 1;
+        self.mutex.unlock();
+
+        self.decrementRef();
     }
 
     /// Exec executes a query without returning any rows.
@@ -586,6 +540,12 @@ pub const DB = struct {
     }
 
     /// ExecContext executes a query without returning any rows, observing the context for cancellation.
+    ///
+    /// Cancellation Contract:
+    /// Cancellation is checked cooperatively at the start of statement execution.
+    /// In embedded and local drivers without dedicated background interrupt threads, a running
+    /// statement that takes a long time cannot be interrupted automatically by Context alone;
+    /// to interrupt an in-flight query asynchronously from another thread, use Conn.interrupt() or DB.interruptAll().
     pub fn execContext(self: *DB, ctx: context.Context, query_str: []const u8, args: []const Value) !Result {
         if (ctx.err()) |e| return e;
         var retry: usize = 0;
@@ -605,6 +565,11 @@ pub const DB = struct {
     }
 
     /// QueryContext executes a query that returns rows, observing the context for cancellation.
+    ///
+    /// Cancellation Contract:
+    /// Cancellation is checked cooperatively before statement execution, and incrementally
+    /// on each Rows.next() cursor advance. If the context is canceled while iterating over rows,
+    /// Rows.next() terminates, closes the connection, and Rows.err() yields the cancellation error.
     pub fn queryContext(self: *DB, ctx: context.Context, query_str: []const u8, args: []const Value) !Rows {
         if (ctx.err()) |e| return e;
         var retry: usize = 0;
@@ -619,11 +584,15 @@ pub const DB = struct {
                 return err;
             };
             rows.pooled_conn = pc;
+            rows.ctx = ctx;
             return rows;
         }
     }
 
     /// BeginTx starts a transaction with options, observing context for cancellation.
+    ///
+    /// Cancellation Contract:
+    /// Cancellation is checked cooperatively at transaction initiation.
     pub fn beginTx(self: *DB, ctx: context.Context, opts: TxOptions) !Tx {
         if (ctx.err()) |e| return e;
         var retry: usize = 0;
@@ -656,6 +625,7 @@ pub const Rows = struct {
     closed: bool = false,
     last_err: ?anyerror = null,
     last_error_msg: ?[]const u8 = null,
+    ctx: ?context.Context = null,
 
     pub fn columns(self: *Rows) []const []const u8 {
         return self.raw_rows.columns();
@@ -663,6 +633,13 @@ pub const Rows = struct {
 
     pub fn next(self: *Rows, dest: []Value) bool {
         if (self.closed) return false;
+        if (self.ctx) |c| {
+            if (c.err()) |e| {
+                self.last_err = e;
+                self.close();
+                return false;
+            }
+        }
         const has_more = self.raw_rows.next(dest);
         if (!has_more) {
             self.last_err = self.raw_rows.err();
@@ -738,26 +715,13 @@ pub const Tx = struct {
 
     /// Executes a query within the transaction that does not return rows (e.g. INSERT, UPDATE).
     pub fn exec(self: *Tx, query_str: []const u8, args: []const Value) !Result {
-        if (self.done) return error.TxDone;
-        const pc = self.pooled_conn orelse return error.TxDone;
-        var stmt = try pc.raw.prepare(query_str);
-        defer stmt.close();
-        return try stmt.exec(args);
+        return self.execContext(context.background(), query_str, args);
     }
 
     /// Executes a query within the transaction that returns rows (e.g. SELECT).
     /// The transaction connection remains tied to this transaction until commit or rollback.
     pub fn query(self: *Tx, query_str: []const u8, args: []const Value) !Rows {
-        if (self.done) return error.TxDone;
-        const pc = self.pooled_conn orelse return error.TxDone;
-        var stmt = try pc.raw.prepare(query_str);
-        errdefer stmt.close();
-        const raw_rows = try stmt.query(args);
-        return Rows{
-            .pooled_conn = null, // tx retains connection until commit/rollback
-            .stmt = stmt,
-            .raw_rows = raw_rows,
-        };
+        return self.queryContext(context.background(), query_str, args);
     }
 
     /// ExecContext executes a query within the transaction observing ctx.
@@ -870,7 +834,8 @@ pub const MockDriver = struct {
         driver: *MockDriver,
         state: *State,
 
-        fn prepare(ctx: *anyopaque, query_str: []const u8) anyerror!driver_pkg.Stmt {
+        fn prepare(ctx: *anyopaque, c: context.Context, query_str: []const u8) anyerror!driver_pkg.Stmt {
+            if (c.err()) |e| return e;
             const self: *MockConn = @ptrCast(@alignCast(ctx));
             {
                 self.state.mutex.lock();
@@ -910,11 +875,12 @@ pub const MockDriver = struct {
             self.state.allocator.destroy(self);
         }
 
-        fn begin(ctx: *anyopaque) anyerror!driver_pkg.Tx {
-            return beginTx(ctx, .{});
+        fn begin(ctx: *anyopaque, c: context.Context) anyerror!driver_pkg.Tx {
+            return beginTx(ctx, c, .{});
         }
 
-        fn beginTx(ctx: *anyopaque, opts: driver_pkg.TxOptions) anyerror!driver_pkg.Tx {
+        fn beginTx(ctx: *anyopaque, c: context.Context, opts: driver_pkg.TxOptions) anyerror!driver_pkg.Tx {
+            if (c.err()) |e| return e;
             const self: *MockConn = @ptrCast(@alignCast(ctx));
             {
                 self.state.mutex.lock();
@@ -932,7 +898,9 @@ pub const MockDriver = struct {
             };
         }
 
-        fn ping(_: *anyopaque) anyerror!void {}
+        fn ping(_: *anyopaque, c: context.Context) anyerror!void {
+            if (c.err()) |e| return e;
+        }
 
         fn interrupt(ctx: *anyopaque) void {
             const self: *MockConn = @ptrCast(@alignCast(ctx));
@@ -954,14 +922,16 @@ pub const MockDriver = struct {
             return 0;
         }
 
-        fn exec(_: *anyopaque, _: []const Value) anyerror!Result {
+        fn exec(_: *anyopaque, c: context.Context, _: []const Value) anyerror!Result {
+            if (c.err()) |e| return e;
             return Result{
                 .last_insert_id = 1001,
                 .rows_affected = 1,
             };
         }
 
-        fn query(ctx: *anyopaque, _: []const Value) anyerror!driver_pkg.Rows {
+        fn query(ctx: *anyopaque, c: context.Context, _: []const Value) anyerror!driver_pkg.Rows {
+            if (c.err()) |e| return e;
             const self: *MockStmt = @ptrCast(@alignCast(ctx));
             const rows_ctx = try self.conn.state.allocator.create(MockRows);
             rows_ctx.* = .{
@@ -1180,9 +1150,9 @@ test "database.sql: concurrent connection pool contention" {
                 const pc = db_ptr.conn() catch return;
                 defer pc.release();
                 // Simulating query execution
-                var stmt = pc.raw.prepare("SELECT 1") catch continue;
+                var stmt = pc.raw.prepare(context.background(), "SELECT 1") catch continue;
                 defer stmt.close();
-                _ = stmt.exec(&.{}) catch {};
+                _ = stmt.exec(context.background(), &.{}) catch {};
             }
         }
     };
@@ -1351,6 +1321,86 @@ test "database.sql: ErrBadConn retry on idle connection" {
 
     // Verify open_count increased to 2 because bad connection was replaced
     try testing.expectEqual(@as(usize, 2), state.open_count);
+}
+
+test "database.sql: Rows.next observing context cancellation and DB.close safety" {
+    const testing = std.testing;
+
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var state = MockDriver.State.init(testing.allocator);
+    defer state.deinit();
+
+    var mock = MockDriver{ .state = &state };
+    const db = try DB.open(testing.allocator, io, mock.driver(), "mock://localhost/testdb");
+    // Verify db.close() cleans up without hanging even if rows are left open
+    defer db.close();
+
+    var cancel_node = try context.withCancel(testing.allocator, context.background());
+    defer testing.allocator.destroy(cancel_node);
+
+    var rows = try db.queryContext(cancel_node.context(), "SELECT 1, 2, 3", &.{});
+    // Cancel the context
+    cancel_node.cancel();
+
+    var dest: [3]Value = undefined;
+    const has_more = rows.next(&dest);
+    try testing.expect(!has_more);
+    try testing.expectEqual(context.Error.Canceled, rows.err().?);
+}
+
+test "database.sql: Rows.close called AFTER DB.close is safe without UAF" {
+    const testing = std.testing;
+
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var state = MockDriver.State.init(testing.allocator);
+    defer state.deinit();
+
+    var mock = MockDriver{ .state = &state };
+    const db = try DB.open(testing.allocator, io, mock.driver(), "mock://localhost/testdb");
+
+    // Borrow an active connection into Rows
+    var rows = try db.query("SELECT 1, 2, 3", &.{});
+
+    // DB is closed BEFORE rows is closed
+    db.close();
+
+    // Closing rows afterwards must safely reclaim the connection and DB memory without UAF
+    rows.close();
+}
+
+test "database.sql: Tx.queryContext observing context cancellation" {
+    const testing = std.testing;
+
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var state = MockDriver.State.init(testing.allocator);
+    defer state.deinit();
+
+    var mock = MockDriver{ .state = &state };
+    const db = try DB.open(testing.allocator, io, mock.driver(), "mock://localhost/testdb");
+    defer db.close();
+
+    var cancel_node = try context.withCancel(testing.allocator, context.background());
+    defer testing.allocator.destroy(cancel_node);
+
+    var tx = try db.begin();
+    defer tx.rollback() catch {};
+
+    var rows = try tx.queryContext(cancel_node.context(), "SELECT 1, 2, 3", &.{});
+    cancel_node.cancel();
+
+    var dest: [3]Value = undefined;
+    const has_more = rows.next(&dest);
+    try testing.expect(!has_more);
+    try testing.expectEqual(context.Error.Canceled, rows.err().?);
 }
 
 test {

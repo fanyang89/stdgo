@@ -2,6 +2,8 @@
 //! as required by package database/sql.
 
 const std = @import("std");
+const context = @import("../../context.zig");
+const Context = context.Context;
 
 /// Driver value representation.
 pub const Value = union(enum) {
@@ -103,8 +105,8 @@ pub const Stmt = struct {
     pub const VTable = struct {
         close: *const fn (ctx: *anyopaque) void,
         numInput: *const fn (ctx: *anyopaque) i64,
-        exec: *const fn (ctx: *anyopaque, args: []const Value) anyerror!Result,
-        query: *const fn (ctx: *anyopaque, args: []const Value) anyerror!Rows,
+        exec: *const fn (ctx: *anyopaque, c: Context, args: []const Value) anyerror!Result,
+        query: *const fn (ctx: *anyopaque, c: Context, args: []const Value) anyerror!Rows,
     };
 
     pub fn close(self: *Stmt) void {
@@ -115,12 +117,12 @@ pub const Stmt = struct {
         return self.vtable.numInput(self.ptr);
     }
 
-    pub fn exec(self: *Stmt, args: []const Value) !Result {
-        return self.vtable.exec(self.ptr, args);
+    pub fn exec(self: *Stmt, c: Context, args: []const Value) !Result {
+        return self.vtable.exec(self.ptr, c, args);
     }
 
-    pub fn query(self: *Stmt, args: []const Value) !Rows {
-        return self.vtable.query(self.ptr, args);
+    pub fn query(self: *Stmt, c: Context, args: []const Value) !Rows {
+        return self.vtable.query(self.ptr, c, args);
     }
 };
 
@@ -149,12 +151,12 @@ pub const Conn = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        prepare: *const fn (ctx: *anyopaque, query: []const u8) anyerror!Stmt,
+        prepare: *const fn (ctx: *anyopaque, c: Context, query: []const u8) anyerror!Stmt,
         close: *const fn (ctx: *anyopaque) void,
-        begin: *const fn (ctx: *anyopaque) anyerror!Tx,
-        ping: *const fn (ctx: *anyopaque) anyerror!void,
+        begin: *const fn (ctx: *anyopaque, c: Context) anyerror!Tx,
+        ping: *const fn (ctx: *anyopaque, c: Context) anyerror!void,
         /// Optional: starts a transaction with specific options (isolation level, read-only).
-        beginTx: ?*const fn (ctx: *anyopaque, opts: TxOptions) anyerror!Tx = null,
+        beginTx: ?*const fn (ctx: *anyopaque, c: Context, opts: TxOptions) anyerror!Tx = null,
         /// [Extension to standard Go driver.Conn]
         /// Optional: Interrupts any in-progress query on this connection (e.g. sqlite3_interrupt,
         /// PostgreSQL CancelRequest, MySQL KILL QUERY).
@@ -165,34 +167,34 @@ pub const Conn = struct {
         lastError: ?*const fn (ctx: *anyopaque) ?[]const u8 = null,
     };
 
-    pub fn prepare(self: *Conn, query: []const u8) !Stmt {
-        return self.vtable.prepare(self.ptr, query);
+    pub fn prepare(self: *Conn, c: Context, query: []const u8) !Stmt {
+        return self.vtable.prepare(self.ptr, c, query);
     }
 
     pub fn close(self: *Conn) void {
         self.vtable.close(self.ptr);
     }
 
-    pub fn begin(self: *Conn) !Tx {
-        return self.vtable.begin(self.ptr);
+    pub fn begin(self: *Conn, c: Context) !Tx {
+        return self.vtable.begin(self.ptr, c);
     }
 
     /// BeginTx starts a transaction with the given options.
     /// If the driver does not implement beginTx and the options are default,
     /// it falls back to begin(). If non-default options are requested and unsupported,
     /// it returns error.TxOptionsNotSupported.
-    pub fn beginTx(self: *Conn, opts: TxOptions) !Tx {
+    pub fn beginTx(self: *Conn, c: Context, opts: TxOptions) !Tx {
         if (self.vtable.beginTx) |f| {
-            return f(self.ptr, opts);
+            return f(self.ptr, c, opts);
         }
         if (opts.isolation == .default and !opts.read_only) {
-            return self.vtable.begin(self.ptr);
+            return self.vtable.begin(self.ptr, c);
         }
         return error.TxOptionsNotSupported;
     }
 
-    pub fn ping(self: *Conn) !void {
-        return self.vtable.ping(self.ptr);
+    pub fn ping(self: *Conn, c: Context) !void {
+        return self.vtable.ping(self.ptr, c);
     }
 
     /// Interrupt aborts any in-progress database operation on this connection out-of-band.

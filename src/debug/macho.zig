@@ -399,9 +399,9 @@ pub const File = struct {
         const is64 = (self.header.magic == Magic64);
         const entsize: usize = if (is64) 16 else 12;
 
-        const total_size = self.symtab_num * entsize;
-        if (self.symtab_off + total_size > self.raw_data.len) return FormatError.UnexpectedEOF;
-        if (self.strtab_off + self.strtab_size > self.raw_data.len) return FormatError.UnexpectedEOF;
+        const total_size = std.math.mul(usize, self.symtab_num, entsize) catch return FormatError.UnexpectedEOF;
+        if (self.symtab_off > self.raw_data.len or self.raw_data.len - self.symtab_off < total_size) return FormatError.UnexpectedEOF;
+        if (self.strtab_off > self.raw_data.len or self.raw_data.len - self.strtab_off < self.strtab_size) return FormatError.UnexpectedEOF;
 
         const strtab = self.raw_data[self.strtab_off .. self.strtab_off + self.strtab_size];
         var syms = try alloc.alloc(Symbol, self.symtab_num);
@@ -439,8 +439,9 @@ pub const FatFile = struct {
         const magic = mem.readInt(u32, data[0..4], .big);
         if (magic != MagicFat) return FormatError.BadMagic;
 
-        const narch = mem.readInt(u32, data[4..8], .big);
-        if (8 + narch * 20 > data.len) return FormatError.UnexpectedEOF;
+        const narch: usize = mem.readInt(u32, data[4..8], .big);
+        const req_size = std.math.mul(usize, narch, 20) catch return FormatError.UnexpectedEOF;
+        if (data.len < 8 or data.len - 8 < req_size) return FormatError.UnexpectedEOF;
 
         var arches = try allocator.alloc(FatArch, narch);
         errdefer allocator.free(arches);

@@ -69,8 +69,14 @@ pub const UDPConn = struct {
             .connected_dest = connected_dest,
         };
 
-        const p = socket.address.ip4.port;
-        const formatted = std.fmt.bufPrint(&uc.local_addr_buf, "127.0.0.1:{d}", .{p}) catch "";
+        const p = switch (socket.address) {
+            .ip4 => |v4| v4.port,
+            .ip6 => |v6| v6.port,
+        };
+        const formatted = switch (socket.address) {
+            .ip4 => std.fmt.bufPrint(&uc.local_addr_buf, "127.0.0.1:{d}", .{p}) catch "",
+            .ip6 => std.fmt.bufPrint(&uc.local_addr_buf, "[::1]:{d}", .{p}) catch "",
+        };
         uc.local_addr_len = formatted.len;
 
         return uc;
@@ -122,8 +128,23 @@ pub const UDPConn = struct {
     }
 
     pub fn read(self: *UDPConn, buf: []u8) anyerror!usize {
-        const res = try self.readFrom(buf);
-        return res.n;
+        while (true) {
+            const res = try self.readFrom(buf);
+            if (self.connected_dest) |dest| {
+                const match = switch (dest) {
+                    .ip4 => |v4| switch (res.addr.ip) {
+                        .v4 => |s4| v4.port == res.addr.port and std.mem.eql(u8, &v4.bytes, &s4),
+                        .v6 => false,
+                    },
+                    .ip6 => |v6| switch (res.addr.ip) {
+                        .v6 => |s6| v6.port == res.addr.port and std.mem.eql(u8, &v6.bytes, &s6),
+                        .v4 => false,
+                    },
+                };
+                if (!match) continue;
+            }
+            return res.n;
+        }
     }
 
     pub fn write(self: *UDPConn, bytes: []const u8) anyerror!usize {

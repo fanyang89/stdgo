@@ -456,11 +456,13 @@ pub const PipePair = struct {
 /// Reads on one end are matched with writes on the other.
 pub fn pipe(allocator: std.mem.Allocator) !PipePair {
     const st = try allocator.create(PipeState);
+    errdefer allocator.destroy(st);
     st.* = .{
         .allocator = allocator,
     };
 
     const ep1 = try allocator.create(PipeEndpoint);
+    errdefer allocator.destroy(ep1);
     ep1.* = .{
         .state = st,
         .in_q = &st.q21,
@@ -468,6 +470,7 @@ pub fn pipe(allocator: std.mem.Allocator) !PipePair {
     };
 
     const ep2 = try allocator.create(PipeEndpoint);
+    errdefer allocator.destroy(ep2);
     ep2.* = .{
         .state = st,
         .in_q = &st.q12,
