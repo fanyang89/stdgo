@@ -60,8 +60,17 @@ pub const Cmd = struct {
         var watchdog_thread: ?std.Thread = null;
         if (self.ctx) |ctx_val| {
             if (!ctx_val.isNoop()) {
+                // Snapshot child.id before spawning so the watchdog never reads
+                // `state.child` concurrently with `state.child.wait(io)` cleanup.
+                const child_id = state.child.id;
                 const Watchdog = struct {
-                    fn runWatchdog(done_ptr: *std.atomic.Value(bool), s_ptr: *State, c_io: Io, c_ctx: context.Context) void {
+                    fn runWatchdog(
+                        done_ptr: *std.atomic.Value(bool),
+                        s_ptr: *State,
+                        c_id: @TypeOf(child_id),
+                        c_io: Io,
+                        c_ctx: context.Context,
+                    ) void {
                         const watchdog_poll_interval_ns: u64 = 1 * std.time.ns_per_ms;
                         while (!done_ptr.load(.acquire)) {
                             if (c_ctx.errWithIo(c_io) != null) {
@@ -76,11 +85,11 @@ pub const Cmd = struct {
                                     // Instead, send an asynchronous termination signal (SIGTERM on POSIX) without
                                     // reaping, letting the main thread's `child.wait(io)` safely reap and collect status.
                                     if (builtin.os.tag != .windows) {
-                                        if (s_ptr.child.id) |pid| {
+                                        if (c_id) |pid| {
                                             _ = std.posix.kill(pid, .TERM) catch {};
                                         }
                                     } else {
-                                        if (s_ptr.child.id) |handle| {
+                                        if (c_id) |handle| {
                                             _ = std.os.windows.ntdll.NtTerminateProcess(handle, @fromBackingInt(@as(u32, 1)));
                                         }
                                     }
@@ -91,7 +100,11 @@ pub const Cmd = struct {
                         }
                     }
                 };
-                watchdog_thread = try std.Thread.spawn(.{}, Watchdog.runWatchdog, .{ &watchdog_done, &state, io, ctx_val });
+                watchdog_thread = try std.Thread.spawn(
+                    .{},
+                    Watchdog.runWatchdog,
+                    .{ &watchdog_done, &state, child_id, io, ctx_val },
+                );
             }
         }
 
