@@ -45,7 +45,7 @@ pub const Header = struct {
         formatOctal(block[136..148], @as(u64, @intCast(@max(0, self.mtime))));
 
         // Typeflag
-        block[156] = @intFromEnum(self.typeflag);
+        block[156] = @backingInt(self.typeflag);
 
         // Linkname (100)
         const link_len = @min(self.linkname.len, 100);
@@ -89,7 +89,7 @@ pub const Header = struct {
         const gid = parseOctal(block[116..124]) orelse 0;
         const size = parseOctal(block[124..136]) orelse 0;
         const mtime = parseOctal(block[136..148]) orelse 0;
-        const typeflag: TypeFlag = @enumFromInt(block[156]);
+        const typeflag: TypeFlag = @fromBackingInt(@intCast(block[156]));
 
         return Header{
             .name = name_buf[0..name_len],

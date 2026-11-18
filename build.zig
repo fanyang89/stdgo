@@ -131,6 +131,28 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
 
+    const tsan_mod = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .sanitize_thread = true,
+    });
+    tsan_mod.addOptions("build_options", build_options);
+    if (enable_sqlite) {
+        if (b.lazyDependency("sqlite", .{
+            .target = target,
+            .optimize = optimize,
+        })) |sqlite_dep| {
+            tsan_mod.addImport("sqlite", sqlite_dep.module("sqlite"));
+        }
+    }
+    const tsan_tests = b.addTest(.{
+        .root_module = tsan_mod,
+    });
+    const run_tsan_tests = b.addRunArtifact(tsan_tests);
+    const tsan_step = b.step("test-tsan", "Run tests with ThreadSanitizer");
+    tsan_step.dependOn(&run_tsan_tests.step);
+
     const install_docs = b.addInstallDirectory(.{
         .source_dir = mod_tests.getEmittedDocs(),
         .install_dir = .prefix,

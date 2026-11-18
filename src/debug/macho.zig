@@ -175,9 +175,9 @@ pub const File = struct {
             .raw_data = data,
             .header = .{
                 .magic = magic,
-                .cpu = @enumFromInt(cpu_raw),
+                .cpu = @fromBackingInt(@intCast(cpu_raw)),
                 .subcpu = subcpu,
-                .type = @enumFromInt(type_raw),
+                .type = @fromBackingInt(@intCast(type_raw)),
                 .ncmd = ncmd,
                 .sizeofcmds = sizeofcmds,
                 .flags = flags,
@@ -204,7 +204,7 @@ pub const File = struct {
             const cmd_len = mem.readInt(u32, data[offset + 4 ..][0..4], endian);
             if (cmd_len < 8 or offset + cmd_len > data.len) return FormatError.InvalidLoadCommand;
 
-            const cmd: LoadCmd = @enumFromInt(cmd_raw);
+            const cmd: LoadCmd = @fromBackingInt(@intCast(cmd_raw));
             const cmd_data = data[offset .. offset + cmd_len];
 
             switch (cmd) {
@@ -449,7 +449,7 @@ pub const FatFile = struct {
         for (0..narch) |i| {
             const raw = data[8 + i * 20 .. 8 + (i + 1) * 20];
             arches[i] = .{
-                .cpu = @enumFromInt(mem.readInt(u32, raw[0..4], .big)),
+                .cpu = @fromBackingInt(@intCast(mem.readInt(u32, raw[0..4], .big))),
                 .subcpu = mem.readInt(u32, raw[4..8], .big),
                 .offset = mem.readInt(u32, raw[8..12], .big),
                 .size = mem.readInt(u32, raw[12..16], .big),
@@ -491,16 +491,16 @@ test "parse minimal synthetic 64-bit Mach-O file" {
 
     // FileHeader (32 bytes for 64-bit)
     mem.writeInt(u32, buf[0..4], Magic64, .little);
-    mem.writeInt(u32, buf[4..8], @intFromEnum(Cpu.arm64), .little);
+    mem.writeInt(u32, buf[4..8], @backingInt(Cpu.arm64), .little);
     mem.writeInt(u32, buf[8..12], 0, .little); // subcpu
-    mem.writeInt(u32, buf[12..16], @intFromEnum(Type.exec), .little);
+    mem.writeInt(u32, buf[12..16], @backingInt(Type.exec), .little);
     mem.writeInt(u32, buf[16..20], 3, .little); // 3 load commands: segment_64, symtab, load_dylib
     mem.writeInt(u32, buf[20..24], 152 + 24 + 48, .little); // sizeofcmds
     mem.writeInt(u32, buf[24..28], 0x200085, .little); // flags
 
     // Command 1: LC_SEGMENT_64 (72 bytes + 1 section * 80 bytes = 152 bytes) at offset 32
     const seg_cmd = buf[32 .. 32 + 152];
-    mem.writeInt(u32, seg_cmd[0..4], @intFromEnum(LoadCmd.segment_64), .little);
+    mem.writeInt(u32, seg_cmd[0..4], @backingInt(LoadCmd.segment_64), .little);
     mem.writeInt(u32, seg_cmd[4..8], 152, .little); // cmdsize
     @memcpy(seg_cmd[8..14], "__TEXT");
     mem.writeInt(u64, seg_cmd[24..32], 0x100000000, .little); // vmaddr
@@ -519,7 +519,7 @@ test "parse minimal synthetic 64-bit Mach-O file" {
 
     // Command 2: LC_SYMTAB (24 bytes) at offset 32 + 152 = 184
     const sym_cmd = buf[184 .. 184 + 24];
-    mem.writeInt(u32, sym_cmd[0..4], @intFromEnum(LoadCmd.symtab), .little);
+    mem.writeInt(u32, sym_cmd[0..4], @backingInt(LoadCmd.symtab), .little);
     mem.writeInt(u32, sym_cmd[4..8], 24, .little);
     mem.writeInt(u32, sym_cmd[8..12], 300, .little); // symoff
     mem.writeInt(u32, sym_cmd[12..16], 1, .little); // nsyms = 1
@@ -528,7 +528,7 @@ test "parse minimal synthetic 64-bit Mach-O file" {
 
     // Command 3: LC_LOAD_DYLIB (48 bytes) at offset 208
     const dylib_cmd = buf[208 .. 208 + 48];
-    mem.writeInt(u32, dylib_cmd[0..4], @intFromEnum(LoadCmd.load_dylib), .little);
+    mem.writeInt(u32, dylib_cmd[0..4], @backingInt(LoadCmd.load_dylib), .little);
     mem.writeInt(u32, dylib_cmd[4..8], 48, .little);
     mem.writeInt(u32, dylib_cmd[8..12], 16, .little); // name offset = 16
     const dylib_name = "/usr/lib/libSystem.B.dylib\x00";
@@ -584,14 +584,14 @@ test "parse minimal Fat / Universal binary header" {
     mem.writeInt(u32, buf[4..8], 2, .big); // 2 architectures (x86_64 and arm64)
 
     // Arch 0: x86_64
-    mem.writeInt(u32, buf[8..12], @intFromEnum(Cpu.amd64), .big);
+    mem.writeInt(u32, buf[8..12], @backingInt(Cpu.amd64), .big);
     mem.writeInt(u32, buf[12..16], 3, .big); // subcpu
     mem.writeInt(u32, buf[16..20], 4096, .big); // offset
     mem.writeInt(u32, buf[20..24], 8192, .big); // size
     mem.writeInt(u32, buf[24..28], 12, .big); // align
 
     // Arch 1: arm64
-    mem.writeInt(u32, buf[28..32], @intFromEnum(Cpu.arm64), .big);
+    mem.writeInt(u32, buf[28..32], @backingInt(Cpu.arm64), .big);
     mem.writeInt(u32, buf[32..36], 0, .big);
     mem.writeInt(u32, buf[36..40], 16384, .big);
     mem.writeInt(u32, buf[40..44], 8192, .big);

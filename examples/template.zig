@@ -135,7 +135,7 @@ pub fn main(init: std.process.Init) !void {
         const HttpHeader = struct {
             @"content-type": []const u8,
             @"x-request-id": []const u8,
-            @"type": []const u8,
+            type: []const u8,
         };
 
         const tmpl_src =
@@ -152,7 +152,7 @@ pub fn main(init: std.process.Init) !void {
         const header = HttpHeader{
             .@"content-type" = "application/json; charset=utf-8",
             .@"x-request-id" = "req_9988aabb",
-            .@"type" = "webhook_payload",
+            .type = "webhook_payload",
         };
         try tmpl.execute(buf.writer(), header);
         std.debug.print("--- 6. Zig-style @\"...\" Quoted Identifier Fields ---\n{s}\n", .{buf.string()});

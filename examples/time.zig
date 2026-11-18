@@ -56,7 +56,7 @@ pub fn main(init: std.process.Init) !void {
     // 3. time.sleep
     // -------------------------------------------------------------
     std.debug.print("3. time.sleep(5ms)...\n", .{});
-    const sleep_dur: time.Duration = @enumFromInt(5 * 1_000_000); // 5ms
+    const sleep_dur: time.Duration = @fromBackingInt(@intCast(5 * 1_000_000)); // 5ms
     try time.sleep(io, sleep_dur);
     const t_after = time.Time.now(io);
     const elapsed = t_after.sub(t_start);

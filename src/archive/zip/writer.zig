@@ -50,7 +50,7 @@ pub const Writer = struct {
         try binary.LittleEndian.writeU32(hdr[0..4], zip_struct.file_header_signature);
         try binary.LittleEndian.writeU16(hdr[4..6], 20); // version needed
         try binary.LittleEndian.writeU16(hdr[6..8], 0); // flags
-        try binary.LittleEndian.writeU16(hdr[8..10], @intFromEnum(comp_method));
+        try binary.LittleEndian.writeU16(hdr[8..10], @backingInt(comp_method));
         try binary.LittleEndian.writeU16(hdr[10..12], 0); // mod time
         try binary.LittleEndian.writeU16(hdr[12..14], 0); // mod date
         try binary.LittleEndian.writeU32(hdr[14..18], crc);
@@ -87,7 +87,7 @@ pub const Writer = struct {
             try binary.LittleEndian.writeU16(cdh[4..6], 20); // version made by
             try binary.LittleEndian.writeU16(cdh[6..8], 20); // version needed
             try binary.LittleEndian.writeU16(cdh[8..10], 0); // flags
-            try binary.LittleEndian.writeU16(cdh[10..12], @intFromEnum(header.method));
+            try binary.LittleEndian.writeU16(cdh[10..12], @backingInt(header.method));
             try binary.LittleEndian.writeU16(cdh[12..14], 0); // mod time
             try binary.LittleEndian.writeU16(cdh[14..16], 0); // mod date
             try binary.LittleEndian.writeU32(cdh[16..20], header.crc32);

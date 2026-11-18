@@ -206,7 +206,7 @@ pub const Transport = struct {
 
     pub fn roundTrip(self: *Transport, req: *Request) !Response {
         if (req.ctx) |c| {
-            if (c.err()) |e| return e;
+            if (c.errWithIo(self.io)) |e| return e;
         }
 
         const target = try parseUrlTarget(req.url);
@@ -260,26 +260,55 @@ pub const Transport = struct {
         while (true) {
             const pooled = if (!use_proxy and allow_pool) self.pool.acquire(target.host, target.port, target.is_tls) else null;
             var conn: *HttpConn = if (pooled) |c|
-            c
-        else blk: {
-            const timeout = makeIoTimeout(self.options.timeout_ns);
+                c
+            else blk: {
+                const timeout = makeIoTimeout(self.options.timeout_ns);
 
-            if (proxy_connect_url) |proxy_url| {
-                const proxy_target = try parseUrlTarget(proxy_url);
-                var stream = try connectStream(self.io, proxy_target.host, proxy_target.port, timeout);
-                errdefer stream.close(self.io);
+                if (proxy_connect_url) |proxy_url| {
+                    const proxy_target = try parseUrlTarget(proxy_url);
+                    var stream = try connectStream(self.io, proxy_target.host, proxy_target.port, timeout);
+                    errdefer stream.close(self.io);
 
-                if (is_socks_proxy) {
-                    try socks5.establishSocks5Tunnel(
-                        self.io,
-                        stream,
-                        target.host,
-                        target.port,
-                        if (socks_user_to_free != null) .{
-                            .username = socks_user_to_free,
-                            .password = socks_pass_to_free,
-                        } else null,
-                    );
+                    if (is_socks_proxy) {
+                        try socks5.establishSocks5Tunnel(
+                            self.io,
+                            stream,
+                            target.host,
+                            target.port,
+                            if (socks_user_to_free != null) .{
+                                .username = socks_user_to_free,
+                                .password = socks_pass_to_free,
+                            } else null,
+                        );
+                        if (target.is_tls) {
+                            break :blk try HttpConn.initTls(
+                                self.allocator,
+                                self.io,
+                                stream,
+                                target.host,
+                                self.options.ca_bundle,
+                                self.options.insecure_skip_verify,
+                            );
+                        } else {
+                            break :blk try HttpConn.initPlain(self.allocator, self.io, stream);
+                        }
+                    } else if (target.is_tls) {
+                        try establishConnectTunnel(self.io, stream, target.host, target.port, proxy_auth_header);
+                        break :blk try HttpConn.initTls(
+                            self.allocator,
+                            self.io,
+                            stream,
+                            target.host,
+                            self.options.ca_bundle,
+                            self.options.insecure_skip_verify,
+                        );
+                    } else {
+                        break :blk try HttpConn.initPlain(self.allocator, self.io, stream);
+                    }
+                } else {
+                    var stream = try connectStream(self.io, target.host, target.port, timeout);
+                    errdefer stream.close(self.io);
+
                     if (target.is_tls) {
                         break :blk try HttpConn.initTls(
                             self.allocator,
@@ -292,148 +321,107 @@ pub const Transport = struct {
                     } else {
                         break :blk try HttpConn.initPlain(self.allocator, self.io, stream);
                     }
-                } else if (target.is_tls) {
-                    try establishConnectTunnel(self.io, stream, target.host, target.port, proxy_auth_header);
-                    break :blk try HttpConn.initTls(
-                        self.allocator,
-                        self.io,
-                        stream,
-                        target.host,
-                        self.options.ca_bundle,
-                        self.options.insecure_skip_verify,
-                    );
-                } else {
-                    break :blk try HttpConn.initPlain(self.allocator, self.io, stream);
                 }
-            } else {
-                var stream = try connectStream(self.io, target.host, target.port, timeout);
-                errdefer stream.close(self.io);
-
-                if (target.is_tls) {
-                    break :blk try HttpConn.initTls(
-                        self.allocator,
-                        self.io,
-                        stream,
-                        target.host,
-                        self.options.ca_bundle,
-                        self.options.insecure_skip_verify,
-                    );
-                } else {
-                    break :blk try HttpConn.initPlain(self.allocator, self.io, stream);
-                }
-            }
-        };
-        errdefer {
-            conn.close(self.io);
-            self.allocator.destroy(conn);
-        }
-
-        // Serialize HTTP/1.1 request
-        var req_buf = std.ArrayListUnmanaged(u8).empty;
-        defer req_buf.deinit(self.allocator);
-
-        try req_buf.appendSlice(self.allocator, req.method.asString());
-        try req_buf.append(self.allocator, ' ');
-        if (use_proxy and !target.is_tls and !is_socks_proxy) {
-            // Forward proxy plain HTTP request uses absolute URI
-            if (std.mem.startsWith(u8, req.url, "http://") or std.mem.startsWith(u8, req.url, "https://")) {
-                try req_buf.appendSlice(self.allocator, req.url);
-            } else {
-                try req_buf.appendSlice(self.allocator, "http://");
-                try req_buf.appendSlice(self.allocator, req.url);
-            }
-        } else {
-            if (!std.mem.startsWith(u8, target.request_target, "/")) {
-                try req_buf.append(self.allocator, '/');
-            }
-            try req_buf.appendSlice(self.allocator, target.request_target);
-        }
-        try req_buf.appendSlice(self.allocator, " HTTP/1.1\r\n");
-
-        if (req.header.get("Host") == null) {
-            try req_buf.appendSlice(self.allocator, "Host: ");
-            try req_buf.appendSlice(self.allocator, target.host);
-            const is_default_port = (!target.is_tls and target.port == 80) or (target.is_tls and target.port == 443);
-            if (!is_default_port) {
-                var port_buf: [8]u8 = undefined;
-                const port_str = try std.fmt.bufPrint(&port_buf, ":{d}", .{target.port});
-                try req_buf.appendSlice(self.allocator, port_str);
-            }
-            try req_buf.appendSlice(self.allocator, "\r\n");
-        }
-
-        if (use_proxy and !target.is_tls and !is_socks_proxy) {
-            if (req.header.get("Proxy-Connection") == null) {
-                try req_buf.appendSlice(self.allocator, "Proxy-Connection: Keep-Alive\r\n");
-            }
-            if (proxy_auth_header) |auth| {
-                if (req.header.get("Proxy-Authorization") == null) {
-                    try req_buf.appendSlice(self.allocator, "Proxy-Authorization: ");
-                    try req_buf.appendSlice(self.allocator, auth);
-                    try req_buf.appendSlice(self.allocator, "\r\n");
-                }
-            }
-        }
-
-        if (req.header.get("User-Agent") == null) {
-            try req_buf.appendSlice(self.allocator, "User-Agent: curl/8.7.1\r\n");
-        }
-        if (req.header.get("Accept") == null) {
-            try req_buf.appendSlice(self.allocator, "Accept: */*\r\n");
-        }
-        if (!self.options.disable_compression and req.header.get("Accept-Encoding") == null) {
-            try req_buf.appendSlice(self.allocator, "Accept-Encoding: gzip\r\n");
-        }
-        if (req.header.get("Connection") == null) {
-            if (self.options.max_idle_conns_per_host > 0) {
-                try req_buf.appendSlice(self.allocator, "Connection: keep-alive\r\n");
-            } else {
-                try req_buf.appendSlice(self.allocator, "Connection: close\r\n");
-            }
-        }
-
-        if (req.body) |b| {
-            if (req.header.get("Content-Length") == null and req.header.get("Transfer-Encoding") == null) {
-                var cl_buf: [32]u8 = undefined;
-                const cl_str = try std.fmt.bufPrint(&cl_buf, "Content-Length: {d}\r\n", .{b.len});
-                try req_buf.appendSlice(self.allocator, cl_str);
-            }
-        } else if (req.body_reader != null) {
-            if (req.content_length) |len| {
-                if (req.header.get("Content-Length") == null and req.header.get("Transfer-Encoding") == null) {
-                    var cl_buf: [32]u8 = undefined;
-                    const cl_str = try std.fmt.bufPrint(&cl_buf, "Content-Length: {d}\r\n", .{len});
-                    try req_buf.appendSlice(self.allocator, cl_str);
-                }
-            } else {
-                if (req.header.get("Transfer-Encoding") == null) {
-                    try req_buf.appendSlice(self.allocator, "Transfer-Encoding: chunked\r\n");
-                }
-            }
-        }
-
-        for (req.header.entries.items) |entry| {
-            try req_buf.appendSlice(self.allocator, entry.name);
-            try req_buf.appendSlice(self.allocator, ": ");
-            try req_buf.appendSlice(self.allocator, entry.value);
-            try req_buf.appendSlice(self.allocator, "\r\n");
-        }
-        try req_buf.appendSlice(self.allocator, "\r\n");
-
-        const write_res = conn.writeAll(self.io, req_buf.items, self.options.timeout_ns);
-        if (write_res) |_| {} else |err| {
-            if (pooled != null and req.body_reader == null) {
+            };
+            errdefer {
                 conn.close(self.io);
                 self.allocator.destroy(conn);
-                allow_pool = false;
-                continue;
             }
-            return err;
-        }
 
-        if (req.body) |b| {
-            const body_res = conn.writeAll(self.io, b, self.options.timeout_ns);
-            if (body_res) |_| {} else |err| {
+            // Serialize HTTP/1.1 request
+            var req_buf = std.ArrayListUnmanaged(u8).empty;
+            defer req_buf.deinit(self.allocator);
+
+            try req_buf.appendSlice(self.allocator, req.method.asString());
+            try req_buf.append(self.allocator, ' ');
+            if (use_proxy and !target.is_tls and !is_socks_proxy) {
+                // Forward proxy plain HTTP request uses absolute URI
+                if (std.mem.startsWith(u8, req.url, "http://") or std.mem.startsWith(u8, req.url, "https://")) {
+                    try req_buf.appendSlice(self.allocator, req.url);
+                } else {
+                    try req_buf.appendSlice(self.allocator, "http://");
+                    try req_buf.appendSlice(self.allocator, req.url);
+                }
+            } else {
+                if (!std.mem.startsWith(u8, target.request_target, "/")) {
+                    try req_buf.append(self.allocator, '/');
+                }
+                try req_buf.appendSlice(self.allocator, target.request_target);
+            }
+            try req_buf.appendSlice(self.allocator, " HTTP/1.1\r\n");
+
+            if (req.header.get("Host") == null) {
+                try req_buf.appendSlice(self.allocator, "Host: ");
+                try req_buf.appendSlice(self.allocator, target.host);
+                const is_default_port = (!target.is_tls and target.port == 80) or (target.is_tls and target.port == 443);
+                if (!is_default_port) {
+                    var port_buf: [8]u8 = undefined;
+                    const port_str = try std.fmt.bufPrint(&port_buf, ":{d}", .{target.port});
+                    try req_buf.appendSlice(self.allocator, port_str);
+                }
+                try req_buf.appendSlice(self.allocator, "\r\n");
+            }
+
+            if (use_proxy and !target.is_tls and !is_socks_proxy) {
+                if (req.header.get("Proxy-Connection") == null) {
+                    try req_buf.appendSlice(self.allocator, "Proxy-Connection: Keep-Alive\r\n");
+                }
+                if (proxy_auth_header) |auth| {
+                    if (req.header.get("Proxy-Authorization") == null) {
+                        try req_buf.appendSlice(self.allocator, "Proxy-Authorization: ");
+                        try req_buf.appendSlice(self.allocator, auth);
+                        try req_buf.appendSlice(self.allocator, "\r\n");
+                    }
+                }
+            }
+
+            if (req.header.get("User-Agent") == null) {
+                try req_buf.appendSlice(self.allocator, "User-Agent: curl/8.7.1\r\n");
+            }
+            if (req.header.get("Accept") == null) {
+                try req_buf.appendSlice(self.allocator, "Accept: */*\r\n");
+            }
+            if (!self.options.disable_compression and req.header.get("Accept-Encoding") == null) {
+                try req_buf.appendSlice(self.allocator, "Accept-Encoding: gzip\r\n");
+            }
+            if (req.header.get("Connection") == null) {
+                if (self.options.max_idle_conns_per_host > 0) {
+                    try req_buf.appendSlice(self.allocator, "Connection: keep-alive\r\n");
+                } else {
+                    try req_buf.appendSlice(self.allocator, "Connection: close\r\n");
+                }
+            }
+
+            if (req.body) |b| {
+                if (req.header.get("Content-Length") == null and req.header.get("Transfer-Encoding") == null) {
+                    var cl_buf: [32]u8 = undefined;
+                    const cl_str = try std.fmt.bufPrint(&cl_buf, "Content-Length: {d}\r\n", .{b.len});
+                    try req_buf.appendSlice(self.allocator, cl_str);
+                }
+            } else if (req.body_reader != null) {
+                if (req.content_length) |len| {
+                    if (req.header.get("Content-Length") == null and req.header.get("Transfer-Encoding") == null) {
+                        var cl_buf: [32]u8 = undefined;
+                        const cl_str = try std.fmt.bufPrint(&cl_buf, "Content-Length: {d}\r\n", .{len});
+                        try req_buf.appendSlice(self.allocator, cl_str);
+                    }
+                } else {
+                    if (req.header.get("Transfer-Encoding") == null) {
+                        try req_buf.appendSlice(self.allocator, "Transfer-Encoding: chunked\r\n");
+                    }
+                }
+            }
+
+            for (req.header.entries.items) |entry| {
+                try req_buf.appendSlice(self.allocator, entry.name);
+                try req_buf.appendSlice(self.allocator, ": ");
+                try req_buf.appendSlice(self.allocator, entry.value);
+                try req_buf.appendSlice(self.allocator, "\r\n");
+            }
+            try req_buf.appendSlice(self.allocator, "\r\n");
+
+            const write_res = conn.writeAll(self.io, req_buf.items, self.options.timeout_ns);
+            if (write_res) |_| {} else |err| {
                 if (pooled != null and req.body_reader == null) {
                     conn.close(self.io);
                     self.allocator.destroy(conn);
@@ -442,125 +430,137 @@ pub const Transport = struct {
                 }
                 return err;
             }
-        } else if (req.body_reader) |r| {
-            var buf: [4096]u8 = undefined;
-            if (req.content_length != null) {
-                var remaining = req.content_length.?;
-                while (remaining > 0) {
-                    const to_read = @min(buf.len, remaining);
-                    const n = try r.readSliceShort(buf[0..to_read]);
-                    if (n == 0) break;
-                    try conn.writeAll(self.io, buf[0..n], self.options.timeout_ns);
-                    remaining -= n;
-                }
-            } else {
-                // chunked streaming upload
-                while (true) {
-                    const n = try r.readSliceShort(&buf);
-                    if (n == 0) break;
-                    var hex_buf: [16]u8 = undefined;
-                    const hex_str = try std.fmt.bufPrint(&hex_buf, "{x}\r\n", .{n});
-                    try conn.writeAll(self.io, hex_str, self.options.timeout_ns);
-                    try conn.writeAll(self.io, buf[0..n], self.options.timeout_ns);
-                    try conn.writeAll(self.io, "\r\n", self.options.timeout_ns);
-                }
-                try conn.writeAll(self.io, "0\r\n\r\n", self.options.timeout_ns);
-            }
-        }
 
-        // Read response head using standard Io.Reader buffering & toss
-        const in = conn.reader();
-        var head_len: usize = 0;
-        const max_head_len = 16 * 1024;
-        var header_retry = false;
-
-        while (true) {
-            const buffered = in.buffered();
-            if (std.mem.indexOf(u8, buffered, "\r\n\r\n")) |idx| {
-                head_len = idx + 4;
-                break;
-            }
-            if (buffered.len >= max_head_len) return error.ResponseHeaderTooLarge;
-            in.fillMore() catch |err| switch (err) {
-                error.EndOfStream => {
-                    if (pooled != null and req.body_reader == null and buffered.len == 0) {
-                        header_retry = true;
-                        break;
+            if (req.body) |b| {
+                const body_res = conn.writeAll(self.io, b, self.options.timeout_ns);
+                if (body_res) |_| {} else |err| {
+                    if (pooled != null and req.body_reader == null) {
+                        conn.close(self.io);
+                        self.allocator.destroy(conn);
+                        allow_pool = false;
+                        continue;
                     }
-                    return error.ConnectionClosedPrematurely;
-                },
-                else => |e| return e,
-            };
-        }
-
-        if (header_retry) {
-            conn.close(self.io);
-            self.allocator.destroy(conn);
-            allow_pool = false;
-            continue;
-        }
-
-        const raw_head = try self.allocator.dupe(u8, in.buffered()[0..head_len]);
-        errdefer self.allocator.free(raw_head);
-        in.toss(head_len);
-
-        const head = try parseResponseHead(self.allocator, raw_head);
-
-        var mode: @import("response.zig").BodyMode = .close_eof;
-        var content_length: u64 = 0;
-        var can_keep_alive = true;
-
-        if (head.headers.get("Transfer-Encoding")) |te| {
-            if (std.mem.indexOf(u8, te, "chunked") != null) {
-                mode = .chunked;
-            }
-        } else if (head.headers.get("Content-Length")) |cl| {
-            content_length = std.fmt.parseInt(u64, cl, 10) catch return error.InvalidContentLength;
-            mode = .fixed;
-        }
-
-        if (head.headers.get("Connection")) |conn_hdr| {
-            if (std.ascii.eqlIgnoreCase(conn_hdr, "close")) {
-                can_keep_alive = false;
-            }
-        }
-
-        const leftover: []const u8 = &.{};
-
-        const host_copy = try self.allocator.dupe(u8, target.host);
-        errdefer self.allocator.free(host_copy);
-
-        const body_ptr = try self.allocator.create(ResponseBodyReader);
-        errdefer self.allocator.destroy(body_ptr);
-        body_ptr.* = ResponseBodyReader.init(self.io, conn, mode, content_length, leftover);
-
-        var resp = Response{
-            .allocator = self.allocator,
-            .status = head.status,
-            .status_code = head.status_code,
-            .proto = head.proto,
-            .header = head.headers,
-            .body = body_ptr,
-            .conn = conn,
-            .pool = if (use_proxy) null else &self.pool,
-            .pool_host = host_copy,
-            .pool_port = target.port,
-            .can_keep_alive = if (use_proxy) false else can_keep_alive,
-            .closed = false,
-            .raw_head = raw_head,
-            .uncompressed = false,
-        };
-
-        if (!self.options.disable_compression and req.method != .HEAD) {
-            if (resp.header.get("Content-Encoding")) |enc| {
-                if (std.ascii.eqlIgnoreCase(enc, "gzip")) {
-                    try resp.body.enableGzip(self.allocator);
-                    resp.uncompressed = true;
-                    resp.header.del("Content-Encoding");
-                    resp.header.del("Content-Length");
+                    return err;
+                }
+            } else if (req.body_reader) |r| {
+                var buf: [4096]u8 = undefined;
+                if (req.content_length != null) {
+                    var remaining = req.content_length.?;
+                    while (remaining > 0) {
+                        const to_read = @min(buf.len, remaining);
+                        const n = try r.readSliceShort(buf[0..to_read]);
+                        if (n == 0) break;
+                        try conn.writeAll(self.io, buf[0..n], self.options.timeout_ns);
+                        remaining -= n;
+                    }
+                } else {
+                    // chunked streaming upload
+                    while (true) {
+                        const n = try r.readSliceShort(&buf);
+                        if (n == 0) break;
+                        var hex_buf: [16]u8 = undefined;
+                        const hex_str = try std.fmt.bufPrint(&hex_buf, "{x}\r\n", .{n});
+                        try conn.writeAll(self.io, hex_str, self.options.timeout_ns);
+                        try conn.writeAll(self.io, buf[0..n], self.options.timeout_ns);
+                        try conn.writeAll(self.io, "\r\n", self.options.timeout_ns);
+                    }
+                    try conn.writeAll(self.io, "0\r\n\r\n", self.options.timeout_ns);
                 }
             }
-        }
+
+            // Read response head using standard Io.Reader buffering & toss
+            const in = conn.reader();
+            var head_len: usize = 0;
+            const max_head_len = 16 * 1024;
+            var header_retry = false;
+
+            while (true) {
+                const buffered = in.buffered();
+                if (std.mem.indexOf(u8, buffered, "\r\n\r\n")) |idx| {
+                    head_len = idx + 4;
+                    break;
+                }
+                if (buffered.len >= max_head_len) return error.ResponseHeaderTooLarge;
+                in.fillMore() catch |err| switch (err) {
+                    error.EndOfStream => {
+                        if (pooled != null and req.body_reader == null and buffered.len == 0) {
+                            header_retry = true;
+                            break;
+                        }
+                        return error.ConnectionClosedPrematurely;
+                    },
+                    else => |e| return e,
+                };
+            }
+
+            if (header_retry) {
+                conn.close(self.io);
+                self.allocator.destroy(conn);
+                allow_pool = false;
+                continue;
+            }
+
+            const raw_head = try self.allocator.dupe(u8, in.buffered()[0..head_len]);
+            errdefer self.allocator.free(raw_head);
+            in.toss(head_len);
+
+            const head = try parseResponseHead(self.allocator, raw_head);
+
+            var mode: @import("response.zig").BodyMode = .close_eof;
+            var content_length: u64 = 0;
+            var can_keep_alive = true;
+
+            if (head.headers.get("Transfer-Encoding")) |te| {
+                if (std.mem.indexOf(u8, te, "chunked") != null) {
+                    mode = .chunked;
+                }
+            } else if (head.headers.get("Content-Length")) |cl| {
+                content_length = std.fmt.parseInt(u64, cl, 10) catch return error.InvalidContentLength;
+                mode = .fixed;
+            }
+
+            if (head.headers.get("Connection")) |conn_hdr| {
+                if (std.ascii.eqlIgnoreCase(conn_hdr, "close")) {
+                    can_keep_alive = false;
+                }
+            }
+
+            const leftover: []const u8 = &.{};
+
+            const host_copy = try self.allocator.dupe(u8, target.host);
+            errdefer self.allocator.free(host_copy);
+
+            const body_ptr = try self.allocator.create(ResponseBodyReader);
+            errdefer self.allocator.destroy(body_ptr);
+            body_ptr.* = ResponseBodyReader.init(self.io, conn, mode, content_length, leftover);
+
+            var resp = Response{
+                .allocator = self.allocator,
+                .status = head.status,
+                .status_code = head.status_code,
+                .proto = head.proto,
+                .header = head.headers,
+                .body = body_ptr,
+                .conn = conn,
+                .pool = if (use_proxy) null else &self.pool,
+                .pool_host = host_copy,
+                .pool_port = target.port,
+                .can_keep_alive = if (use_proxy) false else can_keep_alive,
+                .closed = false,
+                .raw_head = raw_head,
+                .uncompressed = false,
+            };
+
+            if (!self.options.disable_compression and req.method != .HEAD) {
+                if (resp.header.get("Content-Encoding")) |enc| {
+                    if (std.ascii.eqlIgnoreCase(enc, "gzip")) {
+                        try resp.body.enableGzip(self.allocator);
+                        resp.uncompressed = true;
+                        resp.header.del("Content-Encoding");
+                        resp.header.del("Content-Length");
+                    }
+                }
+            }
 
             return resp;
         }

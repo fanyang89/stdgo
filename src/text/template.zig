@@ -1368,7 +1368,7 @@ const Parser = struct {
                 const pipe_start = std.mem.indexOfScalar(u8, header, '|');
                 const pipe_end = std.mem.lastIndexOfScalar(u8, header, '|');
                 if (pipe_start != null and pipe_end != null and pipe_end.? > pipe_start.?) {
-                    target = std.mem.trim(u8, header[0 .. pipe_start.?], " \t\r\n");
+                    target = std.mem.trim(u8, header[0..pipe_start.?], " \t\r\n");
                     const captures_str = std.mem.trim(u8, header[pipe_start.? + 1 .. pipe_end.?], " \t\r\n");
                     var it_cap = std.mem.splitScalar(u8, captures_str, ',');
                     if (it_cap.next()) |p1| {
@@ -1849,7 +1849,7 @@ test "text.template: Zig-style @\"...\" quoted identifier fields" {
     const Header = struct {
         @"content-type": []const u8,
         @"x-request-id": []const u8,
-        @"type": []const u8,
+        type: []const u8,
         @"app.kubernetes.io/name": []const u8,
     };
 
@@ -1872,7 +1872,7 @@ test "text.template: Zig-style @\"...\" quoted identifier fields" {
     const data = Header{
         .@"content-type" = "application/json",
         .@"x-request-id" = "req_12345",
-        .@"type" = "api_event",
+        .type = "api_event",
         .@"app.kubernetes.io/name" = "stdgo-service",
     };
 

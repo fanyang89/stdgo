@@ -191,11 +191,11 @@ pub const Symbol = struct {
     library: []const u8 = "",
 
     pub fn bind(self: Symbol) SymBind {
-        return @enumFromInt(@as(u4, @truncate(self.info >> 4)));
+        return @fromBackingInt(@intCast(@as(u4, @truncate(self.info >> 4))));
     }
 
     pub fn symType(self: Symbol) SymType {
-        return @enumFromInt(@as(u4, @truncate(self.info & 0x0f)));
+        return @fromBackingInt(@intCast(@as(u4, @truncate(self.info & 0x0f))));
     }
 };
 
@@ -221,18 +221,18 @@ pub const File = struct {
         if (data.len < 16) return FormatError.UnexpectedEOF;
         if (!mem.eql(u8, data[0..4], ELFMAG)) return FormatError.BadMagic;
 
-        const class: Class = @enumFromInt(data[4]);
+        const class: Class = @fromBackingInt(@intCast(data[4]));
         if (class != .elf32 and class != .elf64) return FormatError.InvalidClass;
 
-        const data_enc: Data = @enumFromInt(data[5]);
+        const data_enc: Data = @fromBackingInt(@intCast(data[5]));
         const endian: std.builtin.Endian = switch (data_enc) {
             .lsb => .little,
             .msb => .big,
             else => return FormatError.InvalidData,
         };
 
-        const version: Version = @enumFromInt(data[6]);
-        const osabi: OSABI = @enumFromInt(data[7]);
+        const version: Version = @fromBackingInt(@intCast(data[6]));
+        const osabi: OSABI = @fromBackingInt(@intCast(data[7]));
         const abiversion: u8 = data[8];
 
         var f = try allocator.create(File);
@@ -291,8 +291,8 @@ pub const File = struct {
             .osabi = osabi,
             .abiversion = abiversion,
             .byte_order = endian,
-            .type = @enumFromInt(type_raw),
-            .machine = @enumFromInt(machine_raw),
+            .type = @fromBackingInt(@intCast(type_raw)),
+            .machine = @fromBackingInt(@intCast(machine_raw)),
             .entry = entry,
         };
 
@@ -312,7 +312,7 @@ pub const File = struct {
                 if (off + 40 > data.len) return FormatError.InvalidSectionHeader;
                 const sh = data[off .. off + 40];
                 const name_off = mem.readInt(u32, sh[0..4], endian);
-                const shtype: SectionType = @enumFromInt(mem.readInt(u32, sh[4..8], endian));
+                const shtype: SectionType = @fromBackingInt(@intCast(mem.readInt(u32, sh[4..8], endian)));
                 const flags = mem.readInt(u32, sh[8..12], endian);
                 const addr = mem.readInt(u32, sh[12..16], endian);
                 const offset = mem.readInt(u32, sh[16..20], endian);
@@ -348,7 +348,7 @@ pub const File = struct {
                 if (off + 64 > data.len) return FormatError.InvalidSectionHeader;
                 const sh = data[off .. off + 64];
                 const name_off = mem.readInt(u32, sh[0..4], endian);
-                const shtype: SectionType = @enumFromInt(mem.readInt(u32, sh[4..8], endian));
+                const shtype: SectionType = @fromBackingInt(@intCast(mem.readInt(u32, sh[4..8], endian)));
                 const flags = mem.readInt(u64, sh[8..16], endian);
                 const addr = mem.readInt(u64, sh[16..24], endian);
                 const offset = mem.readInt(u64, sh[24..32], endian);
@@ -407,7 +407,7 @@ pub const File = struct {
             if (class == .elf32) {
                 if (off + 32 > data.len) return FormatError.InvalidProgramHeader;
                 const ph = data[off .. off + 32];
-                const ptype: ProgType = @enumFromInt(mem.readInt(u32, ph[0..4], endian));
+                const ptype: ProgType = @fromBackingInt(@intCast(mem.readInt(u32, ph[0..4], endian)));
                 const poffset = mem.readInt(u32, ph[4..8], endian);
                 const vaddr = mem.readInt(u32, ph[8..12], endian);
                 const paddr = mem.readInt(u32, ph[12..16], endian);
@@ -434,7 +434,7 @@ pub const File = struct {
                 // elf64
                 if (off + 56 > data.len) return FormatError.InvalidProgramHeader;
                 const ph = data[off .. off + 56];
-                const ptype: ProgType = @enumFromInt(mem.readInt(u32, ph[0..4], endian));
+                const ptype: ProgType = @fromBackingInt(@intCast(mem.readInt(u32, ph[0..4], endian)));
                 const flags = mem.readInt(u32, ph[4..8], endian);
                 const poffset = mem.readInt(u64, ph[8..16], endian);
                 const vaddr = mem.readInt(u64, ph[16..24], endian);

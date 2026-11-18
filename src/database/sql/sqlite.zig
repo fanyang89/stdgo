@@ -588,4 +588,3 @@ test "stdgo.database.sql.sqlite: in-memory CRUD and transaction rollback/commit"
         try tx.commit();
     }
 }
-

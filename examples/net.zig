@@ -125,7 +125,7 @@ pub fn main(init: std.process.Init) !void {
     const dial_str = try std.fmt.bufPrint(&dial_buf, "127.0.0.1:{d}", .{port});
 
     const dialer = net.Dialer{
-        .timeout = @enumFromInt(5 * @intFromEnum(time.Duration.second)),
+        .timeout = @fromBackingInt(@intCast(5 * @backingInt(time.Duration.second))),
     };
     const client_conn = try dialer.dial(gpa, io, "tcp", dial_str);
     defer client_conn.close();

@@ -63,14 +63,14 @@ pub fn main(init: std.process.Init) !void {
 
     var macho_buf: [512]u8 = @splat(0);
     std.mem.writeInt(u32, macho_buf[0..4], macho.Magic64, .little);
-    std.mem.writeInt(u32, macho_buf[4..8], @intFromEnum(macho.Cpu.arm64), .little);
-    std.mem.writeInt(u32, macho_buf[12..16], @intFromEnum(macho.Type.exec), .little);
+    std.mem.writeInt(u32, macho_buf[4..8], @backingInt(macho.Cpu.arm64), .little);
+    std.mem.writeInt(u32, macho_buf[12..16], @backingInt(macho.Type.exec), .little);
     std.mem.writeInt(u32, macho_buf[16..20], 2, .little); // 2 commands: segment_64 + load_dylib
     std.mem.writeInt(u32, macho_buf[20..24], 152 + 48, .little);
 
     // Segment __TEXT with section __text
     const seg = macho_buf[32 .. 32 + 152];
-    std.mem.writeInt(u32, seg[0..4], @intFromEnum(macho.LoadCmd.segment_64), .little);
+    std.mem.writeInt(u32, seg[0..4], @backingInt(macho.LoadCmd.segment_64), .little);
     std.mem.writeInt(u32, seg[4..8], 152, .little);
     @memcpy(seg[8..14], "__TEXT");
     std.mem.writeInt(u64, seg[24..32], 0x100000000, .little);
@@ -85,7 +85,7 @@ pub fn main(init: std.process.Init) !void {
 
     // LC_LOAD_DYLIB
     const dylib_cmd = macho_buf[184 .. 184 + 48];
-    std.mem.writeInt(u32, dylib_cmd[0..4], @intFromEnum(macho.LoadCmd.load_dylib), .little);
+    std.mem.writeInt(u32, dylib_cmd[0..4], @backingInt(macho.LoadCmd.load_dylib), .little);
     std.mem.writeInt(u32, dylib_cmd[4..8], 48, .little);
     std.mem.writeInt(u32, dylib_cmd[8..12], 16, .little);
     const dylib_name = "/usr/lib/libSystem.B.dylib\x00";
@@ -118,15 +118,15 @@ pub fn main(init: std.process.Init) !void {
     std.mem.writeInt(u32, pe_buf[0x3c..0x40], 128, .little); // e_lfanew = 128
 
     std.mem.writeInt(u32, pe_buf[128..132], pe.IMAGE_NT_SIGNATURE, .little); // "PE\0\0"
-    std.mem.writeInt(u16, pe_buf[132..134], @intFromEnum(pe.Machine.amd64), .little);
+    std.mem.writeInt(u16, pe_buf[132..134], @backingInt(pe.Machine.amd64), .little);
     std.mem.writeInt(u16, pe_buf[134..136], 1, .little); // 1 section
     std.mem.writeInt(u16, pe_buf[148..150], 112, .little); // Optional header size
 
     // OptionalHeader PE32+
-    std.mem.writeInt(u16, pe_buf[152..154], @intFromEnum(pe.OptionalHeaderMagic.pe32_plus), .little);
+    std.mem.writeInt(u16, pe_buf[152..154], @backingInt(pe.OptionalHeaderMagic.pe32_plus), .little);
     std.mem.writeInt(u32, pe_buf[168..172], 0x1400, .little); // AddressOfEntryPoint
     std.mem.writeInt(u64, pe_buf[176..184], 0x140000000, .little); // ImageBase
-    std.mem.writeInt(u16, pe_buf[220..222], @intFromEnum(pe.Subsystem.windows_cui), .little);
+    std.mem.writeInt(u16, pe_buf[220..222], @backingInt(pe.Subsystem.windows_cui), .little);
 
     // Section .text
     const pe_sec = pe_buf[264..304];

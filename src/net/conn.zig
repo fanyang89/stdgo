@@ -262,7 +262,7 @@ pub const Dialer = struct {
         network: []const u8,
         address: []const u8,
     ) !Conn {
-        if (ctx.err()) |e| return e;
+        if (ctx.errWithIo(io)) |e| return e;
 
         if (!std.mem.startsWith(u8, network, "tcp")) {
             return error.UnknownNetwork;
@@ -290,7 +290,7 @@ pub const Dialer = struct {
         }
         errdefer stream.close(io);
 
-        if (ctx.err()) |e| return e;
+        if (ctx.errWithIo(io)) |e| return e;
 
         const sc = try StreamConn.init(allocator, io, stream, address);
         return sc.conn();

@@ -25,7 +25,7 @@ pub fn parseResponseHead(allocator: std.mem.Allocator, buf: []const u8) !Respons
     const code_str = part_iter.next() orelse return error.MalformedStatusLine;
 
     const code = std.fmt.parseInt(u16, code_str, 10) catch return error.MalformedStatusCode;
-    const status: Status = @enumFromInt(code);
+    const status: Status = @fromBackingInt(@intCast(code));
 
     var headers = Header.init(allocator);
     errdefer headers.deinit();

@@ -32,11 +32,9 @@ pub fn main(init: std.process.Init) !void {
 
     // Simulate CLI arguments: -host 0.0.0.0 -port=9090 -verbose extra_file1 extra_file2
     const mock_args = [_][]const u8{
-        "-host",    "0.0.0.0",
-        "-port=9090",
-        "-verbose",
-        "service.conf",
-        "deploy.json",
+        "-host",        "0.0.0.0",
+        "-port=9090",   "-verbose",
+        "service.conf", "deploy.json",
     };
 
     std.debug.print("2. Parsing arguments:\n   ", .{});

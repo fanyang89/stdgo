@@ -147,7 +147,7 @@ pub const File = struct {
         const chars = mem.readInt(u16, coff_raw[18..20], .little);
 
         const file_hdr = FileHeader{
-            .machine = @enumFromInt(machine_raw),
+            .machine = @fromBackingInt(@intCast(machine_raw)),
             .number_of_sections = num_sections,
             .time_date_stamp = time_date,
             .pointer_to_symbol_table = symtab_ptr,
@@ -162,7 +162,7 @@ pub const File = struct {
         if (opt_size >= 28 and opt_offset + opt_size <= data.len) {
             const opt_data = data[opt_offset .. opt_offset + opt_size];
             const magic_raw = mem.readInt(u16, opt_data[0..2], .little);
-            const opt_magic: OptionalHeaderMagic = @enumFromInt(magic_raw);
+            const opt_magic: OptionalHeaderMagic = @fromBackingInt(@intCast(magic_raw));
 
             const major_linker = opt_data[2];
             const minor_linker = opt_data[3];
@@ -185,7 +185,7 @@ pub const File = struct {
                     image_base = mem.readInt(u32, opt_data[28..32], .little);
                     sec_align = mem.readInt(u32, opt_data[32..36], .little);
                     file_align = mem.readInt(u32, opt_data[36..40], .little);
-                    subsystem = @enumFromInt(mem.readInt(u16, opt_data[68..70], .little));
+                    subsystem = @fromBackingInt(@intCast(mem.readInt(u16, opt_data[68..70], .little)));
                     dll_chars = mem.readInt(u16, opt_data[70..72], .little);
 
                     // Data directories at offset 96 (each 8 bytes)
@@ -209,7 +209,7 @@ pub const File = struct {
                     image_base = mem.readInt(u64, opt_data[24..32], .little);
                     sec_align = mem.readInt(u32, opt_data[32..36], .little);
                     file_align = mem.readInt(u32, opt_data[36..40], .little);
-                    subsystem = @enumFromInt(mem.readInt(u16, opt_data[68..70], .little));
+                    subsystem = @fromBackingInt(@intCast(mem.readInt(u16, opt_data[68..70], .little)));
                     dll_chars = mem.readInt(u16, opt_data[70..72], .little);
 
                     // Data directories at offset 112 (each 8 bytes)
@@ -385,19 +385,19 @@ test "parse minimal synthetic Windows PE64 file" {
     mem.writeInt(u32, buf[128..132], IMAGE_NT_SIGNATURE, .little);
 
     // COFF Header (20 bytes) at 132
-    mem.writeInt(u16, buf[132..134], @intFromEnum(Machine.amd64), .little); // Machine AMD64
+    mem.writeInt(u16, buf[132..134], @backingInt(Machine.amd64), .little); // Machine AMD64
     mem.writeInt(u16, buf[134..136], 1, .little); // 1 section
     mem.writeInt(u32, buf[136..140], 1700000000, .little); // Timestamp
     mem.writeInt(u16, buf[148..150], 112, .little); // opt header size = 112 (PE32+)
     mem.writeInt(u16, buf[150..152], 0x0022, .little); // Executable + Large address aware
 
     // Optional Header (PE32+ magic = 0x20b) at 152
-    mem.writeInt(u16, buf[152..154], @intFromEnum(OptionalHeaderMagic.pe32_plus), .little);
+    mem.writeInt(u16, buf[152..154], @backingInt(OptionalHeaderMagic.pe32_plus), .little);
     mem.writeInt(u32, buf[168..172], 0x1000, .little); // Address of entry point = 0x1000
     mem.writeInt(u64, buf[176..184], 0x140000000, .little); // ImageBase = 0x140000000
     mem.writeInt(u32, buf[184..188], 0x1000, .little); // Section alignment = 4096
     mem.writeInt(u32, buf[188..192], 0x200, .little); // File alignment = 512
-    mem.writeInt(u16, buf[220..222], @intFromEnum(Subsystem.windows_cui), .little); // Windows CUI
+    mem.writeInt(u16, buf[220..222], @backingInt(Subsystem.windows_cui), .little); // Windows CUI
 
     // Section 1 Header at 152 + 112 = 264 (40 bytes)
     const sec = buf[264..304];

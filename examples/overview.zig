@@ -48,7 +48,7 @@ pub fn main(init: std.process.Init) !void {
 
     // 5. Time ParseDuration, Now, Sleep & Slices Sort
     const t_now = stdgo.time.Time.now(init.io);
-    try stdgo.time.sleep(init.io, @enumFromInt(100)); // sleep 100ns via user-passed init.io
+    try stdgo.time.sleep(init.io, @fromBackingInt(@intCast(100))); // sleep 100ns via user-passed init.io
 
     const d1 = try stdgo.time.parseDuration("1h30m");
     const d2 = try stdgo.time.parseDuration("45s");

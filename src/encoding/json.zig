@@ -143,7 +143,7 @@ pub const Encoder = struct {
     /// EncodeToken writes a single JSON token to the stream.
     pub fn encodeToken(self: *Encoder, tok: Token) !void {
         switch (tok) {
-            .delim => |d| try self.writer.writeByte(@intFromEnum(d)),
+            .delim => |d| try self.writer.writeByte(@backingInt(d)),
             .bool => |b| try self.writer.writeAll(if (b) "true" else "false"),
             .number => |n| try self.writer.writeAll(n),
             .string => |s| {

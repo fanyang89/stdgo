@@ -102,7 +102,7 @@ test "net.listen and net.Dialer loopback integration" {
     const addr_str = try std.fmt.bufPrint(&addr_buf, "127.0.0.1:{d}", .{port_num});
 
     const d = Dialer{
-        .timeout = @enumFromInt(5 * @intFromEnum(time.Duration.second)),
+        .timeout = @fromBackingInt(@intCast(5 * @backingInt(time.Duration.second))),
     };
     const client_conn = try d.dial(testing.allocator, io, "tcp", addr_str);
     defer client_conn.close();

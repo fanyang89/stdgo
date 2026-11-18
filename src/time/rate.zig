@@ -30,9 +30,9 @@ pub const Reservation = struct {
     limit: Limit,
 
     pub fn delayFrom(self: Reservation, now: Time) Duration {
-        if (!self.ok) return @enumFromInt(0);
+        if (!self.ok) return @fromBackingInt(@intCast(0));
         const diff = self.time_to_act.sub(now);
-        if (diff.nanoseconds() <= 0) return @enumFromInt(0);
+        if (diff.nanoseconds() <= 0) return @fromBackingInt(@intCast(0));
         return diff;
     }
 
@@ -151,7 +151,7 @@ pub const Limiter = struct {
 
     /// AllowN reports whether n events may happen at time now.
     pub fn allowN(self: *Limiter, now: Time, n: u32) bool {
-        return self.reserveNInternal(now, n, @enumFromInt(0)).ok;
+        return self.reserveNInternal(now, n, @fromBackingInt(@intCast(0))).ok;
     }
 
     /// Reserve is shorthand for ReserveN(Time.now(io), 1).
@@ -206,7 +206,7 @@ pub const Limiter = struct {
         const needed = n_f - self.tokens;
         const delay_sec = needed / self.limit_val;
         const delay_ns: i64 = @intFromFloat(delay_sec * 1e9);
-        const delay_d: Duration = @enumFromInt(delay_ns);
+        const delay_d: Duration = @fromBackingInt(@intCast(delay_ns));
 
         if (max_future_reserve) |max_d| {
             if (delay_d.nanoseconds() > max_d.nanoseconds()) {
@@ -239,7 +239,7 @@ pub const Limiter = struct {
 
     /// WaitN blocks until n events are allowed, or until ctx is canceled.
     pub fn waitN(self: *Limiter, ctx: context.Context, io: std.Io, n: u32) RateError!void {
-        if (ctx.err()) |e| return e;
+        if (ctx.errWithIo(io)) |e| return e;
 
         const now = Time.now(io);
         var res = self.reserveN(now, n);
@@ -256,8 +256,21 @@ pub const Limiter = struct {
             }
         }
 
-        try io.sleep(std.Io.Duration.fromNanoseconds(d.nanoseconds()), .awake);
-        if (ctx.err()) |e| return e;
+        const timeout: std.Io.Timeout = .{ .duration = .{
+            .raw = .fromNanoseconds(d.nanoseconds()),
+            .clock = .awake,
+        } };
+        ctx.waitTimeout(io, timeout) catch |wait_err| switch (wait_err) {
+            error.Timeout => {},
+            error.Canceled, error.DeadlineExceeded => |e| {
+                res.cancelAt(Time.now(io));
+                return e;
+            },
+        };
+        if (ctx.errWithIo(io)) |e| {
+            res.cancelAt(Time.now(io));
+            return e;
+        }
     }
 };
 

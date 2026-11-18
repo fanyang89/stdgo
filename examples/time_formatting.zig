@@ -14,7 +14,7 @@ pub fn main(init: std.process.Init) !void {
     const t0 = time.date(2026, .November, 15, 14, 30, 45, 123_456_789, time.Location.fixedZone("CST", 8 * 3600));
     try stdout.print("Time breakdown for 2026-11-15 14:30:45 CST:\n", .{});
     try stdout.print("  Year:       {d}\n", .{t0.year()});
-    try stdout.print("  Month:      {s} ({d})\n", .{ t0.month().string(), @intFromEnum(t0.month()) });
+    try stdout.print("  Month:      {s} ({d})\n", .{ t0.month().string(), @backingInt(t0.month()) });
     try stdout.print("  Day:        {d}\n", .{t0.day()});
     try stdout.print("  Weekday:    {s}\n", .{t0.weekday().string()});
     try stdout.print("  Hour:       {d}\n", .{t0.hour()});

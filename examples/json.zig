@@ -70,7 +70,7 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("   Tokens: ", .{});
     while (try dec.token()) |tok| {
         switch (tok) {
-            .delim => |d| std.debug.print("{c} ", .{@intFromEnum(d)}),
+            .delim => |d| std.debug.print("{c} ", .{@backingInt(d)}),
             .bool => |b| std.debug.print("{s} ", .{if (b) "true" else "false"}),
             .number => |n| std.debug.print("num({s}) ", .{n}),
             .string => |s| std.debug.print("str(\"{s}\") ", .{s}),

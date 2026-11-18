@@ -6,6 +6,7 @@
 
 zig-cache/
 .zig-cache/
+.zig-cache-fresh/
 zig-out/
 zig-pkg/
 build/

@@ -33,11 +33,22 @@ jobs:
       - name: Verify Zig version
         run: zig version
 
+      - name: Install make on Windows
+        if: runner.os == 'Windows'
+        run: choco install make -y --no-progress
+
+      - name: Check formatting
+        run: make fmt-check
+
       - name: Build executable
-        run: zig build
+        run: make build
 
       - name: Run all tests
-        run: zig build test --summary all
+        run: make test
+
+      - name: Run ThreadSanitizer tests
+        if: runner.os != 'Windows'
+        run: make test-tsan
 
       - name: Run all examples
-        run: zig build run-examples
+        run: make run-examples

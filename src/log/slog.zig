@@ -130,7 +130,7 @@ pub const TextHandler = struct {
 
     fn enabledImpl(ctx: *anyopaque, level: Level) bool {
         const self: *TextHandler = @ptrCast(@alignCast(ctx));
-        return @intFromEnum(level) >= @intFromEnum(self.min_level);
+        return @backingInt(level) >= @backingInt(self.min_level);
     }
 
     fn handleImpl(ctx: *anyopaque, record: Record) anyerror!void {
@@ -207,7 +207,7 @@ pub const JSONHandler = struct {
 
     fn enabledImpl(ctx: *anyopaque, level: Level) bool {
         const self: *JSONHandler = @ptrCast(@alignCast(ctx));
-        return @intFromEnum(level) >= @intFromEnum(self.min_level);
+        return @backingInt(level) >= @backingInt(self.min_level);
     }
 
     fn handleImpl(ctx: *anyopaque, record: Record) anyerror!void {

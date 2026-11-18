@@ -58,7 +58,7 @@ pub fn main(init: std.process.Init) !void {
     // -------------------------------------------------------------
     std.debug.print("3. context.withDeadline:\n", .{});
     const now = time.Time.now(io);
-    const short_dur: time.Duration = @enumFromInt(50 * 1_000_000); // 50ms
+    const short_dur: time.Duration = @fromBackingInt(@intCast(50 * 1_000_000)); // 50ms
     const short_deadline = now.add(short_dur);
 
     var dl_ctx = try context.withDeadline(gpa, root_ctx, short_deadline);
@@ -67,7 +67,7 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("   Checking deadline before expiration: done={any}\n", .{dl_ctx.check(io)});
 
     // Sleep 60ms to exceed 50ms deadline
-    try time.sleep(io, @enumFromInt(60 * 1_000_000));
+    try time.sleep(io, @fromBackingInt(@intCast(60 * 1_000_000)));
 
     std.debug.print("   Checking deadline after 60ms sleep:  done={any}, err={any}\n", .{ dl_ctx.check(io), d_ctx.err() });
 

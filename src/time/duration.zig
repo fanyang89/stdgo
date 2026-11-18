@@ -4,27 +4,27 @@ const Allocator = std.mem.Allocator;
 pub const Duration = enum(i64) {
     _,
 
-    pub const nanosecond: Duration = @enumFromInt(1);
-    pub const microsecond: Duration = @enumFromInt(1000);
-    pub const millisecond: Duration = @enumFromInt(1_000_000);
-    pub const second: Duration = @enumFromInt(1_000_000_000);
-    pub const minute: Duration = @enumFromInt(60 * 1_000_000_000);
-    pub const hour: Duration = @enumFromInt(60 * 60 * 1_000_000_000);
+    pub const nanosecond: Duration = @fromBackingInt(@intCast(1));
+    pub const microsecond: Duration = @fromBackingInt(@intCast(1000));
+    pub const millisecond: Duration = @fromBackingInt(@intCast(1_000_000));
+    pub const second: Duration = @fromBackingInt(@intCast(1_000_000_000));
+    pub const minute: Duration = @fromBackingInt(@intCast(60 * 1_000_000_000));
+    pub const hour: Duration = @fromBackingInt(@intCast(60 * 60 * 1_000_000_000));
 
     pub fn nanoseconds(self: Duration) i64 {
-        return @intFromEnum(self);
+        return @backingInt(self);
     }
 
     pub fn microseconds(self: Duration) i64 {
-        return @divTrunc(@intFromEnum(self), 1000);
+        return @divTrunc(@backingInt(self), 1000);
     }
 
     pub fn milliseconds(self: Duration) i64 {
-        return @divTrunc(@intFromEnum(self), 1_000_000);
+        return @divTrunc(@backingInt(self), 1_000_000);
     }
 
     pub fn seconds(self: Duration) f64 {
-        return @as(f64, @floatFromInt(@intFromEnum(self))) / 1e9;
+        return @as(f64, @floatFromInt(@backingInt(self))) / 1e9;
     }
 
     pub fn minutes(self: Duration) f64 {
@@ -40,7 +40,7 @@ pub const Duration = enum(i64) {
     /// unit (ms, µs, ns) so that the leading digit is non-zero. The zero duration
     /// formats as "0s". The caller owns the returned slice.
     pub fn string(self: Duration, allocator: Allocator) Allocator.Error![]u8 {
-        const ns = @intFromEnum(self);
+        const ns = @backingInt(self);
         if (ns == 0) return try allocator.dupe(u8, "0s");
 
         var buf: [32]u8 = undefined;
@@ -148,7 +148,7 @@ pub fn parseDuration(s_in: []const u8) Error!Duration {
     }
 
     if (std.mem.eql(u8, s, "0")) {
-        return @enumFromInt(0);
+        return @fromBackingInt(@intCast(0));
     }
     if (s.len == 0) return Error.InvalidDuration;
 
@@ -219,7 +219,7 @@ pub fn parseDuration(s_in: []const u8) Error!Duration {
     if (neg) {
         signed_ns = -signed_ns;
     }
-    return @enumFromInt(signed_ns);
+    return @fromBackingInt(@intCast(signed_ns));
 }
 
 test "time.parseDuration Go test cases" {
@@ -269,7 +269,7 @@ test "time.Duration.string Go test cases" {
     };
     for (cases) |c| {
         const want, const ns = c;
-        const got = try (@as(Duration, @enumFromInt(ns))).string(testing.allocator);
+        const got = try (@as(Duration, @fromBackingInt(@intCast(ns)))).string(testing.allocator);
         defer testing.allocator.free(got);
         try testing.expectEqualStrings(want, got);
     }

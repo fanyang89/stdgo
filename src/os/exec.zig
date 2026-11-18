@@ -64,7 +64,7 @@ pub const Cmd = struct {
                     fn runWatchdog(done_ptr: *std.atomic.Value(bool), s_ptr: *State, c_io: Io, c_ctx: context.Context) void {
                         const watchdog_poll_interval_ns: u64 = 1 * std.time.ns_per_ms;
                         while (!done_ptr.load(.acquire)) {
-                            if (c_ctx.err() != null) {
+                            if (c_ctx.errWithIo(c_io) != null) {
                                 s_ptr.mutex.lock();
                                 defer s_ptr.mutex.unlock();
                                 if (!s_ptr.exited) {

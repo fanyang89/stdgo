@@ -200,7 +200,7 @@ pub const DivResult64 = struct {
 /// Div64 returns the quotient and remainder of (hi, lo) divided by y:
 /// quo = (hi, lo)/y, rem = (hi, lo)%y.
 /// Returns error.DivisionByZero if y == 0, or error.Overflow if hi >= y.
-pub fn div64(hi: u64, lo: u64, y: u64) error{DivisionByZero, Overflow}!DivResult64 {
+pub fn div64(hi: u64, lo: u64, y: u64) error{ DivisionByZero, Overflow }!DivResult64 {
     if (y == 0) return error.DivisionByZero;
     if (hi >= y) return error.Overflow;
     const num: u128 = (@as(u128, hi) << 64) | @as(u128, lo);

@@ -693,10 +693,6 @@ test "html.template: basic HTML entity escaping" {
     try testing.expectEqualStrings(expected, buf.string());
 }
 
-
-
-
-
 test "html.template: attribute context escaping" {
     const testing = std.testing;
     const bytes = @import("../bytes.zig");
@@ -717,10 +713,6 @@ test "html.template: attribute context escaping" {
     const expected = "<input type=\"text\" value=\"foo&#34; onfocus=&#34;alert(1)\" title='bar&#39; onmouseover=&#39;alert(2)'>";
     try testing.expectEqualStrings(expected, buf.string());
 }
-
-
-
-
 
 test "html.template: URL context protocol sanitization" {
     const testing = std.testing;
@@ -743,10 +735,6 @@ test "html.template: URL context protocol sanitization" {
     try testing.expectEqualStrings(expected, buf.string());
 }
 
-
-
-
-
 test "html.template: script context JavaScript string escaping" {
     const testing = std.testing;
     const bytes = @import("../bytes.zig");
@@ -766,10 +754,6 @@ test "html.template: script context JavaScript string escaping" {
     const expected = "<script>var msg = \"Hello \\x3c/script\\x3e<script\\x3ealert(\\'pwn\\')\\x3c/script\\x3e\";</script>";
     try testing.expectEqualStrings(expected, buf.string());
 }
-
-
-
-
 
 test "html.template: safe types bypass escaping" {
     const testing = std.testing;
@@ -792,10 +776,6 @@ test "html.template: safe types bypass escaping" {
     const expected = "<div><b>Bold & Beautiful</b></div><script>var x = { count: 42, active: true };</script><a href=\"javascript:void(0)\">Link</a>";
     try testing.expectEqualStrings(expected, buf.string());
 }
-
-
-
-
 
 test "html.template: sub-templates and composition with escaping" {
     const testing = std.testing;
@@ -857,7 +837,3 @@ test "html.template: unquoted attribute escaping and multi-attribute parsing" {
     const expected = "<div id=a&#32;b&#61;c disabled class=\"container\"></div>";
     try testing.expectEqualStrings(expected, buf.string());
 }
-
-
-
-

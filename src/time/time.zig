@@ -139,7 +139,7 @@ pub const Time = struct {
 
     pub fn sub(self: Time, u: Time) Duration {
         const diff = self.unixNano() - u.unixNano();
-        return @enumFromInt(diff);
+        return @fromBackingInt(@intCast(diff));
     }
 
     pub fn utc(self: Time) Time {
@@ -185,7 +185,7 @@ pub const Time = struct {
     }
 
     pub fn month(self: Time) Month {
-        return @enumFromInt(self.civil().m);
+        return @fromBackingInt(@intCast(self.civil().m));
     }
 
     pub fn day(self: Time) u8 {
@@ -215,7 +215,7 @@ pub const Time = struct {
         const days = @divFloor(local_sec, 86400);
         var wd = @mod(days + 4, 7);
         if (wd < 0) wd += 7;
-        return @enumFromInt(@as(u8, @intCast(wd)));
+        return @fromBackingInt(@intCast(@as(u8, @intCast(wd))));
     }
 
     pub fn yearDay(self: Time) u16 {
@@ -377,7 +377,7 @@ fn formatOffset(offset_sec: i32, with_colon: bool, w: *std.Io.Writer) !void {
 /// Constructs a Time value from its civil calendar date and time parts.
 pub fn date(y_in: i32, m: Month, d_in: u8, hour: u8, min: u8, sec: u8, nsec: u32, loc_in: ?Location) Time {
     var y = y_in;
-    const m_val: u8 = @intFromEnum(m);
+    const m_val: u8 = @backingInt(m);
     if (m_val <= 2) y -= 1;
     const era = if (y >= 0) @divFloor(y, 400) else @divFloor(y - 399, 400);
     const yoe = y - era * 400;
@@ -462,7 +462,7 @@ pub fn parse(layout: []const u8, value: []const u8) ParseError!Time {
             if (vi + 2 > value.len) return ParseError.InvalidFormat;
             const month_num = std.fmt.parseInt(u8, value[vi .. vi + 2], 10) catch return ParseError.InvalidFormat;
             if (month_num < 1 or month_num > 12) return ParseError.ValueOutOfRange;
-            m = @enumFromInt(month_num);
+            m = @fromBackingInt(@intCast(month_num));
             li += 2;
             vi += 2;
         } else if (std.mem.startsWith(u8, layout[li..], "Monday")) {
@@ -646,7 +646,7 @@ test "time.Time now and add/sub" {
     try testing.expectEqual(@as(i64, 10_000_000_000), diff.nanoseconds());
 
     // verify sleep executes cleanly via caller-provided std.Io
-    try sleep(io, @enumFromInt(1_000));
+    try sleep(io, @fromBackingInt(@intCast(1_000)));
 }
 
 test "time calendar breakdown and date construction" {
