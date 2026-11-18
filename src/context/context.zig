@@ -11,6 +11,17 @@ pub const Error = error{
 pub const WaitError = Error || std.Io.Cancelable;
 pub const WaitTimeoutError = Error || std.Io.Cancelable || std.Io.Timeout.Error;
 
+/// Type-safe, collision-free context key modeled after Go's unexported key types.
+/// Each `(T, name)` combination produces a distinct static `token` address,
+/// enabling O(1) pointer-identity lookup with compile-time type safety.
+pub fn TypedKey(comptime T: type, comptime name: []const u8) type {
+    return struct {
+        pub const Value = T;
+        pub const key_name = name;
+        pub var token: u8 = 0;
+    };
+}
+
 /// Intrusive subscription node for push-based cancellation propagation
 /// (child contexts and `afterFunc` callbacks).
 pub const Subscriber = struct {
@@ -73,6 +84,14 @@ pub const Context = struct {
     /// The caller must ensure `T` matches the type originally passed to `withValue()`.
     pub fn valueAs(self: Context, comptime T: type, key: []const u8) ?*const T {
         const ptr = self.value(key) orelse return null;
+        return @ptrCast(@alignCast(ptr));
+    }
+
+    /// Type-safe lookup for a `TypedKey(T, name)` registered via `withTypedValue()`.
+    pub fn typedValue(self: Context, comptime KeyType: type) ?*const KeyType.Value {
+        var addr_buf: [@sizeOf(usize)]u8 = undefined;
+        std.mem.writeInt(usize, &addr_buf, @intFromPtr(&KeyType.token), .little);
+        const ptr = self.value(&addr_buf) orelse return null;
         return @ptrCast(@alignCast(ptr));
     }
 
@@ -542,7 +561,28 @@ fn parentIo(parent: Context) ?std.Io {
         const p: *ValueContext = @ptrCast(@alignCast(parent.ptr));
         return parentIo(p.parent);
     }
+    if (parent.vtable == &WithoutCancelContext.vtable) {
+        const p: *WithoutCancelContext = @ptrCast(@alignCast(parent.ptr));
+        return parentIo(p.parent);
+    }
     return null;
+}
+
+fn hasAutoTimer(parent: Context) bool {
+    if (parent.vtable == &DeadlineContext.vtable) {
+        const p: *DeadlineContext = @ptrCast(@alignCast(parent.ptr));
+        if (p.timer_thread != null or p.cancel_ctx.canceled.load(.acquire)) return true;
+        return hasAutoTimer(p.cancel_ctx.parent);
+    }
+    if (parent.vtable == &CancelContext.vtable) {
+        const p: *CancelContext = @ptrCast(@alignCast(parent.ptr));
+        return hasAutoTimer(p.parent);
+    }
+    if (parent.vtable == &ValueContext.vtable) {
+        const p: *ValueContext = @ptrCast(@alignCast(parent.ptr));
+        return hasAutoTimer(p.parent);
+    }
+    return false;
 }
 
 fn createCancelContext(
@@ -589,6 +629,7 @@ pub fn withCancelCauseIo(
 pub const ValueContext = struct {
     parent: Context,
     key: []const u8,
+    key_buf: [@sizeOf(usize)]u8 = undefined,
     val_ptr: *const anyopaque,
 
     const vtable = Context.VTable{
@@ -681,6 +722,24 @@ pub fn withValue(
         .key = key,
         .val_ptr = @ptrCast(val_ptr),
     };
+    return ctx;
+}
+
+/// Stores `val_ptr` under a collision-free `TypedKey(T, name)` token address.
+pub fn withTypedValue(
+    allocator: Allocator,
+    parent: Context,
+    comptime KeyType: type,
+    val_ptr: *const KeyType.Value,
+) Allocator.Error!*ValueContext {
+    const ctx = try allocator.create(ValueContext);
+    ctx.* = .{
+        .parent = parent,
+        .key = &.{},
+        .val_ptr = @ptrCast(val_ptr),
+    };
+    std.mem.writeInt(usize, &ctx.key_buf, @intFromPtr(&KeyType.token), .little);
+    ctx.key = &ctx.key_buf;
     return ctx;
 }
 
@@ -904,22 +963,20 @@ fn createDeadlineContext(
 ) !*DeadlineContext {
     const effective_io = io_opt orelse parentIo(parent);
 
+    var effective_deadline = deadline_val;
+    var effective_cause = timeout_cause;
+    var parent_handles_timer = false;
+
     if (parent.deadline()) |parent_deadline| {
         if (parent_deadline.unixNano() <= deadline_val.unixNano()) {
-            // Parent deadline is already earlier or equal; mirror Go's optimization
-            // by using parent's deadline and avoiding an extra timer thread.
-            const ctx = try allocator.create(DeadlineContext);
-            ctx.* = .{
-                .cancel_ctx = .{
-                    .parent = parent,
-                    .io = effective_io,
-                    .has_notifier = (effective_io != null),
-                },
-                .deadline_val = parent_deadline,
-                .timeout_cause = null,
-            };
-            _ = parent.vtable.subscribe(parent.ptr, &ctx.cancel_ctx.parent_sub);
-            return ctx;
+            effective_deadline = parent_deadline;
+            // Only skip spawning our own timer if an ancestor already has an active
+            // auto-timer; otherwise a lazy `withDeadline` parent would leave a child
+            // `withTimeout` / `withDeadlineIo` hanging forever in `wait(io)`.
+            if (hasAutoTimer(parent)) {
+                effective_cause = null;
+                parent_handles_timer = true;
+            }
         }
     }
 
@@ -931,8 +988,8 @@ fn createDeadlineContext(
             .io = effective_io,
             .has_notifier = (effective_io != null),
         },
-        .deadline_val = deadline_val,
-        .timeout_cause = timeout_cause,
+        .deadline_val = effective_deadline,
+        .timeout_cause = effective_cause,
     };
 
     const subscribed = parent.vtable.subscribe(parent.ptr, &ctx.cancel_ctx.parent_sub);
@@ -941,11 +998,13 @@ fn createDeadlineContext(
     }
     errdefer parent.vtable.unsubscribe(parent.ptr, &ctx.cancel_ctx.parent_sub);
 
-    if (io_opt) |io| {
-        if (ctx.check(io)) {
-            return ctx;
+    if (!parent_handles_timer) {
+        if (io_opt) |io| {
+            if (ctx.check(io)) {
+                return ctx;
+            }
+            ctx.timer_thread = try std.Thread.spawn(.{}, DeadlineContext.timerMain, .{ ctx, io });
         }
-        ctx.timer_thread = try std.Thread.spawn(.{}, DeadlineContext.timerMain, .{ ctx, io });
     }
     return ctx;
 }
@@ -1007,9 +1066,10 @@ pub const AfterFuncHandle = struct {
     sub: Subscriber,
     callback: *const fn (arg: ?*anyopaque) void,
     arg: ?*anyopaque,
+    mutex: Mutex = .{},
     thread: ?std.Thread = null,
-    stopped: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    fired: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    stopped: bool = false,
+    fired: bool = false,
 
     fn onCancel(
         sub_ptr: *Subscriber,
@@ -1018,12 +1078,19 @@ pub const AfterFuncHandle = struct {
         _: ?std.Io,
     ) void {
         const self: *AfterFuncHandle = @fieldParentPtr("sub", sub_ptr);
-        if (self.stopped.load(.acquire)) return;
-        if (self.fired.swap(true, .acq_rel)) return;
-        self.thread = std.Thread.spawn(.{}, runCallback, .{self}) catch {
-            self.callback(self.arg);
+        self.mutex.lock();
+        if (self.stopped or self.fired) {
+            self.mutex.unlock();
             return;
-        };
+        }
+        self.fired = true;
+        self.thread = std.Thread.spawn(.{}, runCallback, .{self}) catch null;
+        const ran_async = (self.thread != null);
+        self.mutex.unlock();
+
+        if (!ran_async) {
+            self.callback(self.arg);
+        }
     }
 
     fn runCallback(self: *AfterFuncHandle) void {
@@ -1034,16 +1101,32 @@ pub const AfterFuncHandle = struct {
     /// Returns `true` if the call stopped the callback before it started,
     /// matching Go's `context.AfterFunc`.
     pub fn stop(self: *AfterFuncHandle) bool {
-        if (self.stopped.swap(true, .acq_rel)) return false;
+        self.mutex.lock();
+        if (self.stopped) {
+            self.mutex.unlock();
+            return false;
+        }
+        self.stopped = true;
+        const already_fired = self.fired;
+        self.mutex.unlock();
+
         self.ctx.vtable.unsubscribe(self.ctx.ptr, &self.sub);
-        return !self.fired.load(.acquire);
+
+        self.mutex.lock();
+        const result = !self.fired;
+        self.mutex.unlock();
+        _ = already_fired;
+        return result;
     }
 
     pub fn deinit(self: *AfterFuncHandle, allocator: Allocator) void {
         _ = self.stop();
-        if (self.thread) |t| {
+        self.mutex.lock();
+        const t_opt = self.thread;
+        self.thread = null;
+        self.mutex.unlock();
+        if (t_opt) |t| {
             t.join();
-            self.thread = null;
         }
         allocator.destroy(self);
     }
@@ -1530,4 +1613,98 @@ test "context unsubscribe waits for in-flight notification and allows same-threa
         parent.cancel();
         try testing.expect(r.called);
     }
+}
+
+test "context lazy parent deadline does not prevent child withTimeout from firing" {
+    const testing = std.testing;
+
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const CustomErr = error{ChildTimeout};
+    const early_lazy_dl = time.Time.now(io).add(@fromBackingInt(@intCast(15 * std.time.ns_per_ms)));
+    var lazy_parent = try withDeadline(testing.allocator, background(), early_lazy_dl);
+    defer lazy_parent.deinit(testing.allocator);
+
+    // Child has a later timeout and explicit io + cause. Because `lazy_parent` has
+    // no auto-timer thread, `child` must still spawn its own timer so `wait(io)`
+    // wakes up instead of hanging forever.
+    var child = try withTimeoutCause(
+        testing.allocator,
+        io,
+        lazy_parent.context(),
+        @fromBackingInt(@intCast(1 * std.time.ns_per_s)),
+        CustomErr.ChildTimeout,
+    );
+    defer child.deinit(testing.allocator);
+
+    try testing.expectError(Error.DeadlineExceeded, child.context().wait(io));
+    try testing.expectEqual(@as(?anyerror, CustomErr.ChildTimeout), cause(child.context()));
+}
+
+test "context.afterFunc on already-canceled context and immediate deinit" {
+    const testing = std.testing;
+
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const State = struct {
+        count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+        fn cb(arg: ?*anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(arg.?));
+            _ = self.count.fetchAdd(1, .acq_rel);
+        }
+    };
+
+    var canceled_parent = try withCancelIo(testing.allocator, io, background());
+    defer canceled_parent.deinit(testing.allocator);
+    canceled_parent.cancel();
+
+    var s = State{};
+    for (0..32) |_| {
+        var h = try afterFunc(testing.allocator, canceled_parent.context(), State.cb, &s);
+        h.deinit(testing.allocator);
+    }
+    try testing.expectEqual(@as(u32, 32), s.count.load(.acquire));
+}
+
+test "context.withoutCancel preserves parentIo for downstream withCancel" {
+    const testing = std.testing;
+
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var root = try withCancelIo(testing.allocator, io, background());
+    defer root.deinit(testing.allocator);
+
+    var detached = try withoutCancel(testing.allocator, root.context());
+    defer detached.deinit(testing.allocator);
+
+    var child = try withCancel(testing.allocator, detached.context());
+    defer child.deinit(testing.allocator);
+
+    try testing.expect(child.io != null);
+    try testing.expect(child.has_notifier);
+}
+
+test "context.TypedKey provides collision-free type-safe lookup" {
+    const testing = std.testing;
+
+    const K1 = TypedKey(u32, "test.k1");
+    const K2 = TypedKey(u32, "test.k2");
+
+    const v1_val: u32 = 100;
+    const v2_val: u32 = 200;
+
+    var n1 = try withTypedValue(testing.allocator, background(), K1, &v1_val);
+    defer n1.deinit(testing.allocator);
+    var n2 = try withTypedValue(testing.allocator, n1.context(), K2, &v2_val);
+    defer n2.deinit(testing.allocator);
+
+    const ctx = n2.context();
+    try testing.expectEqual(@as(u32, 100), ctx.typedValue(K1).?.*);
+    try testing.expectEqual(@as(u32, 200), ctx.typedValue(K2).?.*);
 }
