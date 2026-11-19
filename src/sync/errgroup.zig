@@ -1,4 +1,5 @@
 const std = @import("std");
+const Thread = @import("backend.zig").Thread;
 const Allocator = std.mem.Allocator;
 const WaitGroup = @import("waitgroup.zig").WaitGroup;
 const Mutex = @import("mutex.zig").Mutex;
@@ -16,7 +17,7 @@ pub const Group = struct {
     cancel_ctx: ?*CancelContext = null,
     limit: usize = 0,
     active_count: usize = 0,
-    threads: std.ArrayListUnmanaged(std.Thread) = .empty,
+    threads: std.ArrayListUnmanaged(Thread) = .empty,
 
     /// Init creates an empty Group without context cancellation.
     pub fn init(allocator: Allocator) Group {
@@ -74,7 +75,7 @@ pub const Group = struct {
                     break;
                 }
                 self.mutex.unlock();
-                std.Thread.yield() catch {};
+                Thread.yield() catch {};
             }
         }
 
@@ -112,7 +113,7 @@ pub const Group = struct {
             .task_args = args,
         };
 
-        const thread = std.Thread.spawn(.{}, TaskContext.run, .{ctx}) catch |spawn_err| {
+        const thread = Thread.spawn(.{}, TaskContext.run, .{ctx}) catch |spawn_err| {
             self.allocator.destroy(ctx);
             if (self.limit > 0) {
                 self.mutex.lock();

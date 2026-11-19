@@ -1,7 +1,8 @@
 const std = @import("std");
+const backend = @import("backend.zig");
 
 pub const WaitGroup = struct {
-    counter: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
+    counter: backend.Value(i32) = .init(0),
 
     pub fn init() WaitGroup {
         return .{};
@@ -25,7 +26,7 @@ pub const WaitGroup = struct {
     /// Wait blocks until the WaitGroup counter is zero.
     pub fn wait(self: *WaitGroup) void {
         while (self.counter.load(.acquire) > 0) {
-            std.Thread.yield() catch {};
+            backend.Thread.yield() catch {};
         }
     }
 };

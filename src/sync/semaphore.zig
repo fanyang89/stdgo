@@ -5,6 +5,7 @@
 //! fully integrating with stdgo.context.Context for deadlines and cancellation.
 
 const std = @import("std");
+const backend = @import("backend.zig");
 const Mutex = @import("mutex.zig").Mutex;
 const context = @import("../context.zig");
 const Context = context.Context;
@@ -18,7 +19,7 @@ pub const Error = error{
 /// Waiter node in the FIFO queue to guarantee fair, starvation-free scheduling.
 const Waiter = struct {
     n: i64,
-    ready: std.atomic.Value(bool),
+    ready: backend.Value(bool),
     next: ?*Waiter = null,
     prev: ?*Waiter = null,
 };
@@ -87,7 +88,7 @@ pub const Weighted = struct {
         // 2. Slow path: enqueue waiter to ensure FIFO fairness and prevent starvation
         var w = Waiter{
             .n = n,
-            .ready = std.atomic.Value(bool).init(false),
+            .ready = .init(false),
             .next = null,
             .prev = self.tail,
         };
@@ -127,7 +128,7 @@ pub const Weighted = struct {
             if (self.io) |io_val| {
                 io_val.sleep(std.Io.Duration.fromNanoseconds(100 * std.time.ns_per_us), .awake) catch {};
             } else {
-                std.Thread.yield() catch {};
+                backend.Thread.yield() catch {};
             }
         }
     }

@@ -1,8 +1,9 @@
 const std = @import("std");
+const backend = @import("backend.zig");
 
 pub const Once = struct {
     // 0 = uninitialized, 1 = initializing, 2 = initialized
-    state: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    state: backend.Value(u32) = .init(0),
 
     pub fn init() Once {
         return .{};
@@ -11,19 +12,24 @@ pub const Once = struct {
     /// Do calls the function f if and only if Do is being called for the
     /// first time for this instance of Once.
     pub fn do(self: *Once, comptime f: anytype, args: anytype) void {
-        if (self.state.load(.acquire) == 2) return;
-
-        if (self.state.cmpxchgStrong(0, 1, .acquire, .monotonic)) |_| {
-            while (self.state.load(.acquire) != 2) {
-                std.Thread.yield() catch {};
-            }
-            return;
-        }
-
-        @call(.auto, f, args);
-        self.state.store(2, .release);
+        doWithState(&self.state, yieldThread, f, args);
     }
 };
+
+fn yieldThread() void {
+    backend.Thread.yield() catch {};
+}
+
+/// Uses the caller's zero-initialized atomic and scheduler for the same Once protocol.
+pub fn doWithState(state: anytype, comptime yield: fn () void, comptime f: anytype, args: anytype) void {
+    if (state.load(.acquire) == 2) return;
+    if (state.cmpxchgStrong(0, 1, .acquire, .monotonic)) |_| {
+        while (state.load(.acquire) != 2) yield();
+        return;
+    }
+    @call(.auto, f, args);
+    state.store(2, .release);
+}
 
 test "sync.Once executed exactly once across threads" {
     const testing = std.testing;
